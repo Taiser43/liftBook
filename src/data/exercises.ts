@@ -1,0 +1,143 @@
+export interface PreloadedExercise {
+  equipmentType?: string;
+  brand?: string;
+  name: string;
+  category: 'Chest' | 'Back' | 'Shoulders' | 'Legs' | 'Arms' | 'Core';
+}
+
+export const PRELOADED_EXERCISES: PreloadedExercise[] = [
+  // CHEST
+  { name: 'Barbell Bench Press', category: 'Chest', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Incline Barbell Bench Press', category: 'Chest', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Decline Barbell Bench Press', category: 'Chest', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Flat Dumbbell Press', category: 'Chest', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Incline Dumbbell Press', category: 'Chest', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Decline Dumbbell Press', category: 'Chest', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Dumbbell Chest Fly', category: 'Chest', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Incline Dumbbell Fly', category: 'Chest', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Cable Crossover (High to Low)', category: 'Chest', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Cable Crossover (Low to High)', category: 'Chest', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Middle Cable Chest Fly', category: 'Chest', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Chest Press Machine', category: 'Chest', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Incline Chest Press Machine', category: 'Chest', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Pec Deck / Fly Machine', category: 'Chest', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Dips (Chest Focus)', category: 'Chest', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Push-Ups (Standard)', category: 'Chest', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Weighted Push-Ups', category: 'Chest', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Decline Push-Ups', category: 'Chest', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Landmine Chest Press', category: 'Chest', equipmentType: 'Maschine', brand: 'Keine' },
+
+  // BACK
+  { name: 'Deadlift (Conventional)', category: 'Back', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Deadlift (Sumo)', category: 'Back', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Barbell Bent-Over Row', category: 'Back', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Pendlay Row', category: 'Back', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'Lat Pulldown (Wide Grip)', category: 'Back', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Lat Pulldown (Close Grip / V-Bar)', category: 'Back', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Pull-Up / Chin-Up', category: 'Back', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Neutral Grip Pull-Up', category: 'Back', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Seated Cable Row', category: 'Back', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Single-Arm Dumbbell Row', category: 'Back', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Meadow Row (Landmine)', category: 'Back', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'T-Bar Row (Chest Supported)', category: 'Back', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'Chest Supported Dumbbell Row', category: 'Back', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Face Pull (Cable Rope)', category: 'Back', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Straight-Arm Cable Pulldown', category: 'Back', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Lat Prayer (Cable)', category: 'Back', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Hyperextensions (Back Extensions)', category: 'Back', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'Good Mornings (Barbell)', category: 'Back', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Barbell / Dumbbell Shrugs', category: 'Back', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Rack Pulls', category: 'Back', equipmentType: 'Sonstiges', brand: 'Keine' },
+
+  // SHOULDERS
+  { name: 'Overhead Barbell Press (OHP)', category: 'Shoulders', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Seated Dumbbell Shoulder Press', category: 'Shoulders', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Standing Dumbbell Shoulder Press', category: 'Shoulders', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Arnold Press', category: 'Shoulders', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Lateral Raises (Dumbbell)', category: 'Shoulders', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Cable Lateral Raises (Single Arm)', category: 'Shoulders', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Machine Lateral Raise', category: 'Shoulders', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Incline Dumbbell Lateral Raise', category: 'Shoulders', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Front Dumbbell Raise', category: 'Shoulders', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Cable Front Raise', category: 'Shoulders', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Rear Delt Reverse Fly (Dumbbell)', category: 'Shoulders', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Rear Delt Machine (Reverse Pec Deck)', category: 'Shoulders', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Cable Rear Delt Fly (Cross)', category: 'Shoulders', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Upright Row (Barbell / Cable)', category: 'Shoulders', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Smith Machine Overhead Press', category: 'Shoulders', equipmentType: 'Multipresse', brand: 'Keine' },
+  { name: 'Lu Raises', category: 'Shoulders', equipmentType: 'Sonstiges', brand: 'Keine' },
+
+  // LEGS
+  { name: 'Barbell Back Squat', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Front Squat (Barbell)', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Goblet Squat (Dumbbell)', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Hack Squat (Machine)', category: 'Legs', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Leg Press (45° Machine)', category: 'Legs', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Romanian Deadlift (RDL - Barbell)', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Dumbbell Romanian Deadlift (DB RDL)', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Bulgarian Split Squat', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Walking Dumbbell Lunges', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Reverse Lunges (Barbell / DB)', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Leg Extension (Machine)', category: 'Legs', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Lying Hamstring Curl', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Seated Hamstring Curl', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Standing Calf Raises (Machine / DB)', category: 'Legs', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Seated Calf Raises', category: 'Legs', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'Hip Thrust (Barbell / Machine)', category: 'Legs', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Glute Bridge (Barbell / DB)', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Hip Abduction Machine', category: 'Legs', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Hip Adduction Machine', category: 'Legs', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Cable Glute Kickbacks', category: 'Legs', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Sissy Squat', category: 'Legs', equipmentType: 'Freie Übung', brand: 'Keine' },
+
+  // ARMS
+  { name: 'Barbell Bicep Curl', category: 'Arms', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'EZ-Bar Bicep Curl', category: 'Arms', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Dumbbell Hammer Curl', category: 'Arms', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Incline Dumbbell Curl', category: 'Arms', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Preacher Curl (EZ Bar / Machine)', category: 'Arms', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Concentration Curl (Dumbbell)', category: 'Arms', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Cable Bicep Curl (Straight / Rope)', category: 'Arms', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Spider Curl (Dumbbell / EZ-Bar)', category: 'Arms', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Reverse Barbell Curl (Forearms)', category: 'Arms', equipmentType: 'Freie Übung', brand: 'Keine' },
+  { name: 'Tricep Rope Pushdown', category: 'Arms', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Straight Bar Tricep Pushdown', category: 'Arms', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Skull Crushers (EZ Bar)', category: 'Arms', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'Overhead Tricep Extension (Dumbbell / Cable)', category: 'Arms', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Single-Arm Cable Tricep Extension', category: 'Arms', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Close-Grip Bench Press', category: 'Arms', equipmentType: 'Maschine', brand: 'Keine' },
+  { name: 'Dips (Tricep Focus / Parallel Bars)', category: 'Arms', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Bench Dips (Weighted / Bodyweight)', category: 'Arms', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Tricep Kickbacks (Dumbbell / Cable)', category: 'Arms', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Wrist Curls (Forearms)', category: 'Arms', equipmentType: 'Freie Übung', brand: 'Keine' },
+
+  // CORE
+  { name: 'Hanging Leg Raises', category: 'Core', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'Captain’s Chair Leg / Knee Raises', category: 'Core', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'Cable Kneeling Crunch', category: 'Core', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Cable Woodchoppers', category: 'Core', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Ab Wheel Rollout', category: 'Core', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'Plank (Standard / Weighted)', category: 'Core', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Side Plank (Hip Dips)', category: 'Core', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Russian Twists (Weighted)', category: 'Core', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'Decline Bench Weighted Crunches', category: 'Core', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Bicycle Crunches', category: 'Core', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'V-Ups / Pike Crunches', category: 'Core', equipmentType: 'Bodyweight', brand: 'Keine' },
+  { name: 'Dead Bug', category: 'Core', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'Hollow Body Hold', category: 'Core', equipmentType: 'Sonstiges', brand: 'Keine' },
+  { name: 'Pallof Press (Cable Anti-Rotation)', category: 'Core', equipmentType: 'Kabelturm', brand: 'Keine' },
+  { name: 'Dragon Flags', category: 'Core', equipmentType: 'Sonstiges', brand: 'Keine' },
+];
+
+export const DAYS_OF_WEEK = [
+  'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
+];
+
+export const RADAR_GROUPS: Array<{ name: 'Chest' | 'Back' | 'Shoulders' | 'Arms' | 'Legs' | 'Core'; label: string }> = [
+  { name: 'Chest', label: 'Chest' },
+  { name: 'Back', label: 'Back' },
+  { name: 'Shoulders', label: 'Shoulders' },
+  { name: 'Arms', label: 'Arms' },
+  { name: 'Legs', label: 'Legs' },
+  { name: 'Core', label: 'Core' },
+];

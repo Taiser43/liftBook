@@ -1,0 +1,4 @@
+Starting project at /Users/davidbachmann/Documents/Gemini/pt-nutrition-app
+› Port 8081 is running this app in another window
+  /Users/davidbachmann/Documents/Gemini/pt-nutrition-app (pid 33818)
+› Skipping dev server
