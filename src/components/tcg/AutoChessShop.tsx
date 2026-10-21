@@ -17,6 +17,7 @@ export const AutoChessShop: React.FC = () => {
     buyShopCard,
     buyShopItem,
     equipItem,
+    useConsumableItem,
     rerollShop,
     toggleShopLock,
     round,
@@ -234,6 +235,18 @@ export const AutoChessShop: React.FC = () => {
     }
   };
 
+  const handleUseConsumable = (unitId: string) => {
+    if (!selectedInventoryItem) return;
+    const success = useConsumableItem(selectedInventoryItem.id, unitId);
+    if (success) {
+      triggerSuccess();
+      setSelectedInventoryItem(null);
+      Alert.alert('Erfolgreich geheilt! 💚', `Die Einheit wurde durch "${selectedInventoryItem.name}" geheilt / wiederbelebt!`);
+    } else {
+      triggerWarning();
+    }
+  };
+
   // Collect all squad members for equip picker
   const allSquadUnits: { unit: AutoChessUnit; location: 'board' | 'bench'; index: number }[] = [];
   board.forEach((u, i) => {
@@ -431,8 +444,10 @@ export const AutoChessShop: React.FC = () => {
                 <Text style={[styles.stashItemName, { color: theme.color }]} numberOfLines={1}>
                   {item.name.split(' ')[0]}
                 </Text>
-                <View style={styles.stashEquipHint}>
-                  <Text style={styles.stashEquipHintText}>Rüsten ➔</Text>
+                <View style={[styles.stashEquipHint, item.isConsumable && styles.stashConsumableHint]}>
+                  <Text style={[styles.stashEquipHintText, item.isConsumable && styles.stashConsumableHintText]}>
+                    {item.isConsumable ? 'Heilen ⚡' : 'Rüsten ➔'}
+                  </Text>
                 </View>
               </TouchableOpacity>
             );
@@ -480,7 +495,9 @@ export const AutoChessShop: React.FC = () => {
                 <View style={styles.equipModalDivider} />
 
                 <Text style={styles.equipModalSectionTitle}>
-                  Wähle eine Einheit zum Ausrüsten (Max. 2 Items):
+                  {selectedInventoryItem.isConsumable
+                    ? 'Wähle eine Einheit zum Wiederbeleben / Heilen:'
+                    : 'Wähle eine Einheit zum Ausrüsten (Max. 2 Items):'}
                 </Text>
 
                 <ScrollView style={{ maxHeight: 220 }} showsVerticalScrollIndicator={false}>
@@ -490,6 +507,8 @@ export const AutoChessShop: React.FC = () => {
                     allSquadUnits.map(({ unit, location }) => {
                       const currentItemCount = unit.items?.length || 0;
                       const isFull = currentItemCount >= 2;
+                      const isDead = typeof unit.hp === 'number' && unit.hp <= 0;
+                      const isInjured = typeof unit.hp === 'number' && unit.hp > 0 && unit.hp < unit.maxHp;
 
                       return (
                         <View key={unit.instanceId} style={styles.unitEquipRow}>
@@ -497,29 +516,51 @@ export const AutoChessShop: React.FC = () => {
                             <View style={[styles.locationTag, location === 'board' ? styles.boardTag : styles.benchTag]}>
                               <Text style={styles.locationTagText}>{location === 'board' ? 'FELD' : 'BANK'}</Text>
                             </View>
-                            <Text style={styles.unitEquipName} numberOfLines={1}>
-                              {unit.stars}★ {unit.exerciseName}
-                            </Text>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.unitEquipName} numberOfLines={1}>
+                                {unit.stars}★ {unit.exerciseName}
+                              </Text>
+                              <Text style={[styles.unitEquipHpText, isDead ? { color: '#FF453A' } : isInjured ? { color: '#FF9500' } : { color: '#30D158' }]}>
+                                {isDead ? '💀 K.O. (0 HP)' : isInjured ? `🩹 ${unit.hp}/${unit.maxHp} HP` : `💚 ${unit.hp}/${unit.maxHp} HP (Voll)`}
+                              </Text>
+                            </View>
                           </View>
 
-                          {/* Existing items icons */}
-                          <View style={styles.unitEquippedIcons}>
-                            {(unit.items || []).map((it, idx) => (
-                              <View key={`${it.id}_${idx}`} style={styles.tinyItemBadge}>
-                                <MaterialCommunityIcons name={it.icon as any} size={12} color="#FFF" />
+                          {selectedInventoryItem.isConsumable ? (
+                            <TouchableOpacity
+                              style={[
+                                styles.consumableApplyBtn,
+                                isDead ? styles.reviveBtnActive : isInjured ? styles.healBtnActive : styles.equipConfirmBtnDisabled
+                              ]}
+                              disabled={!isDead && !isInjured}
+                              onPress={() => handleUseConsumable(unit.instanceId)}
+                            >
+                              <Text style={styles.consumableApplyBtnText}>
+                                {isDead ? 'Wiederbeleben ⚡' : isInjured ? 'Heilen 💚' : 'Fit 💚'}
+                              </Text>
+                            </TouchableOpacity>
+                          ) : (
+                            <>
+                              {/* Existing items icons */}
+                              <View style={styles.unitEquippedIcons}>
+                                {(unit.items || []).map((it, idx) => (
+                                  <View key={`${it.id}_${idx}`} style={styles.tinyItemBadge}>
+                                    <MaterialCommunityIcons name={it.icon as any} size={12} color="#FFF" />
+                                  </View>
+                                ))}
                               </View>
-                            ))}
-                          </View>
 
-                          <TouchableOpacity
-                            style={[styles.equipConfirmBtn, isFull && styles.equipConfirmBtnDisabled]}
-                            disabled={isFull}
-                            onPress={() => handleEquipToUnit(unit.instanceId)}
-                          >
-                            <Text style={styles.equipConfirmBtnText}>
-                              {isFull ? 'Voll (2/2)' : 'Ausrüsten 🎒'}
-                            </Text>
-                          </TouchableOpacity>
+                              <TouchableOpacity
+                                style={[styles.equipConfirmBtn, isFull && styles.equipConfirmBtnDisabled]}
+                                disabled={isFull}
+                                onPress={() => handleEquipToUnit(unit.instanceId)}
+                              >
+                                <Text style={styles.equipConfirmBtnText}>
+                                  {isFull ? 'Voll (2/2)' : 'Ausrüsten 🎒'}
+                                </Text>
+                              </TouchableOpacity>
+                            </>
+                          )}
                         </View>
                       );
                     })
@@ -1008,6 +1049,46 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontSize: 10,
     fontWeight: '800',
+  },
+  stashConsumableHint: {
+    backgroundColor: '#10B98130',
+  },
+  stashConsumableHintText: {
+    color: '#34D399',
+    fontWeight: '900',
+  },
+  unitEquipHpText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  consumableApplyBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  consumableApplyBtnText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '900',
+  },
+  reviveBtnActive: {
+    backgroundColor: '#FF453A',
+    shadowColor: '#FF453A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.6,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  healBtnActive: {
+    backgroundColor: '#10B981',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.6,
+    shadowRadius: 4,
+    elevation: 3,
   },
   equipModalCloseBtn: {
     marginTop: 12,

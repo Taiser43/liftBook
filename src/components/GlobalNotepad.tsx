@@ -6,13 +6,15 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppStore } from '../store/store';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getAppTheme } from '../utils/theme';
 
 export const GlobalNotepad = ({ navigationRef }: { navigationRef: any }) => {
   const insets = useSafeAreaInsets();
   const [modalVisible, setModalVisible] = useState(false);
   const [noteText, setNoteText] = useState('');
   
-  const { globalNotes, addGlobalNote, deleteGlobalNote } = useAppStore();
+  const { globalNotes, addGlobalNote, deleteGlobalNote, accentThemeId } = useAppStore();
+  const theme = getAppTheme(accentThemeId);
 
   const { width, height } = Dimensions.get('window');
   const BUTTON_SIZE = 50;
@@ -71,7 +73,7 @@ export const GlobalNotepad = ({ navigationRef }: { navigationRef: any }) => {
         {...panResponder.panHandlers}
       >
         <TouchableOpacity 
-          style={styles.floatingButton}
+          style={[styles.floatingButton, { backgroundColor: theme.accent, shadowColor: theme.accent }]}
           activeOpacity={0.8}
           onPress={() => setModalVisible(true)}
         >
@@ -80,8 +82,8 @@ export const GlobalNotepad = ({ navigationRef }: { navigationRef: any }) => {
       </Animated.View>
 
       <Modal visible={modalVisible} animationType="slide" presentationStyle="pageSheet">
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.header}>
+        <SafeAreaView style={[styles.modalContainer, { backgroundColor: theme.subCardBg || '#121212' }]}>
+          <View style={[styles.header, { borderBottomColor: theme.subtleBorder || '#222' }]}>
             <Text style={styles.headerTitle}>Bug & Note Tracker</Text>
             <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
               <MaterialCommunityIcons name="close" size={24} color="#FFF" />
@@ -92,16 +94,16 @@ export const GlobalNotepad = ({ navigationRef }: { navigationRef: any }) => {
             style={{ flex: 1 }} 
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           >
-            <View style={styles.inputContainer}>
+            <View style={[styles.inputContainer, { borderBottomColor: theme.subtleBorder || '#222' }]}>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333' }]}
                 placeholder="Spotted a bug or have an idea?..."
                 placeholderTextColor="#666"
                 multiline
                 value={noteText}
                 onChangeText={setNoteText}
               />
-              <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+              <TouchableOpacity style={[styles.saveBtn, { backgroundColor: theme.accent }]} onPress={handleSave}>
                 <MaterialCommunityIcons name="send" size={20} color="#000" />
               </TouchableOpacity>
             </View>
@@ -111,9 +113,9 @@ export const GlobalNotepad = ({ navigationRef }: { navigationRef: any }) => {
               keyExtractor={item => item.id}
               contentContainerStyle={{ padding: 16 }}
               renderItem={({ item }) => (
-                <View style={styles.noteCard}>
+                <View style={[styles.noteCard, { backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333' }]}>
                   <View style={styles.noteHeader}>
-                    <Text style={styles.noteScreen}>{item.screenName}</Text>
+                    <Text style={[styles.noteScreen, { color: theme.accent }]}>{item.screenName}</Text>
                     <Text style={styles.noteDate}>{formatDate(item.createdAt)}</Text>
                   </View>
                   <Text style={styles.noteText}>{item.text}</Text>

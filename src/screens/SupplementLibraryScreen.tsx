@@ -1,15 +1,20 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, SafeAreaView, Image } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Image, Platform, StatusBar } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppStore, SupplementLibraryItem } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 import SwipeableModal from '../components/SwipeableModal';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import * as ImagePicker from 'expo-image-picker';
+import SupplementBarcodeScannerModal, { ScannedSupplementResult } from '../components/SupplementBarcodeScannerModal';
 
 const CATEGORIES = ['All', 'Daily Health', 'Performance', 'Recovery', 'Vitamins'];
 
 export default function SupplementLibraryScreen({ navigation }: any) {
-  const { supplementLibrary, addSupplementLibraryItem, updateSupplementLibraryItem, deleteSupplementLibraryItem } = useAppStore();
+  const insets = useSafeAreaInsets();
+  const { supplementLibrary, addSupplementLibraryItem, updateSupplementLibraryItem, deleteSupplementLibraryItem, accentThemeId } = useAppStore();
+  const theme = getAppTheme(accentThemeId);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
@@ -17,6 +22,7 @@ export default function SupplementLibraryScreen({ navigation }: any) {
   // Add/Edit Modal State
   const [modalVisible, setModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState<SupplementLibraryItem | null>(null);
+  const [scannerVisible, setScannerVisible] = useState(false);
   
   // Form State
   const [name, setName] = useState('');
@@ -27,6 +33,7 @@ export default function SupplementLibraryScreen({ navigation }: any) {
   const [contentPerUnit, setContentPerUnit] = useState('1');
   const [unitsPerBox, setUnitsPerBox] = useState('');
   const [currentInventory, setCurrentInventory] = useState('');
+  const [barcode, setBarcode] = useState<string | undefined>(undefined);
 
   const filteredLibrary = useMemo(() => {
     return (supplementLibrary || []).filter(item => {
@@ -47,6 +54,7 @@ export default function SupplementLibraryScreen({ navigation }: any) {
     setContentPerUnit('1');
     setUnitsPerBox('');
     setCurrentInventory('');
+    setBarcode(undefined);
     setModalVisible(true);
   };
 
@@ -60,6 +68,7 @@ export default function SupplementLibraryScreen({ navigation }: any) {
     setContentPerUnit(item.contentPerUnit.toString());
     setUnitsPerBox(item.unitsPerBox ? item.unitsPerBox.toString() : '');
     setCurrentInventory(item.currentInventory !== undefined ? item.currentInventory.toString() : '');
+    setBarcode(item.barcode);
     setModalVisible(true);
   };
 
@@ -94,6 +103,7 @@ export default function SupplementLibraryScreen({ navigation }: any) {
       streak: editingItem ? editingItem.streak : 0,
       totalTakenTimes: editingItem ? editingItem.totalTakenTimes : 0,
       totalMissedTimes: editingItem ? editingItem.totalMissedTimes : 0,
+      barcode: barcode || editingItem?.barcode,
     };
 
     if (editingItem) {
@@ -122,19 +132,25 @@ export default function SupplementLibraryScreen({ navigation }: any) {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={[styles.safeArea, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 44) + 12 }]}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
           <MaterialCommunityIcons name="arrow-left" size={28} color="white" />
         </TouchableOpacity>
         <Text style={styles.title}>Supplement Library</Text>
         <View style={{ flex: 1 }} />
-        <TouchableOpacity style={styles.addBtnHeader} onPress={openAddModal}>
+        <TouchableOpacity
+          style={[styles.scanBtnHeader, { backgroundColor: theme.accentBgSoft, borderColor: theme.accent }]}
+          onPress={() => setScannerVisible(true)}
+        >
+          <MaterialCommunityIcons name="barcode-scan" size={20} color={theme.accent} />
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.addBtnHeader, { backgroundColor: theme.accent }]} onPress={openAddModal}>
           <MaterialCommunityIcons name="plus" size={24} color="#000" />
         </TouchableOpacity>
       </View>
 
-      <View style={styles.searchContainer}>
+      <View style={[styles.searchContainer, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]}>
         <MaterialCommunityIcons name="magnify" size={24} color="#888" style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
@@ -158,10 +174,14 @@ export default function SupplementLibraryScreen({ navigation }: any) {
           keyExtractor={(item) => item}
           renderItem={({ item }) => (
             <TouchableOpacity 
-              style={[styles.filterChip, activeFilter === item && styles.filterChipActive]}
+              style={[
+                styles.filterChip,
+                { backgroundColor: theme.cardBg, borderColor: theme.cardBorder },
+                activeFilter === item && { backgroundColor: theme.accentBgSoft, borderColor: theme.accent }
+              ]}
               onPress={() => setActiveFilter(item)}
             >
-              <Text style={[styles.filterChipText, activeFilter === item && styles.filterChipTextActive]}>
+              <Text style={[styles.filterChipText, activeFilter === item && { color: theme.accent, fontWeight: 'bold' }]}>
                 {item}
               </Text>
             </TouchableOpacity>
@@ -192,7 +212,7 @@ export default function SupplementLibraryScreen({ navigation }: any) {
 
           return (
             <TouchableOpacity 
-              style={styles.card}
+              style={[styles.card, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]}
               onPress={() => openEditModal(item)}
             >
               {item.imageUri ? (
@@ -211,6 +231,12 @@ export default function SupplementLibraryScreen({ navigation }: any) {
                   <View style={[styles.tag, { borderColor: catColor + '40', backgroundColor: catColor + '15', borderWidth: 1 }]}>
                     <Text style={[styles.tagText, { color: catColor }]}>{item.category}</Text>
                   </View>
+                  {item.barcode ? (
+                    <View style={[styles.tag, { borderColor: 'rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 3 }]}>
+                      <MaterialCommunityIcons name="barcode" size={11} color="#AAA" />
+                      <Text style={[styles.tagText, { color: '#AAA' }]}>{item.barcode}</Text>
+                    </View>
+                  ) : null}
                 </View>
 
                 <View style={styles.statsRow}>
@@ -249,6 +275,28 @@ export default function SupplementLibraryScreen({ navigation }: any) {
               <MaterialCommunityIcons name="close" size={24} color="#888" />
             </TouchableOpacity>
           </View>
+
+          {/* Barcode Scan Banner */}
+          <TouchableOpacity
+            style={[styles.scanBanner, { backgroundColor: theme.accentBgSoft, borderColor: theme.accent }]}
+            onPress={() => {
+              setModalVisible(false);
+              setScannerVisible(true);
+            }}
+          >
+            <View style={[styles.scanBannerIconWrap, { backgroundColor: theme.accent }]}>
+              <MaterialCommunityIcons name="barcode-scan" size={18} color="#000" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={[styles.scanBannerTitle, { color: theme.accent }]}>
+                {barcode ? `EAN Barcode: ${barcode}` : 'EAN-Barcode scannen'}
+              </Text>
+              <Text style={styles.scanBannerSub}>
+                {barcode ? 'Tippen zum erneuten Scannen' : 'Name, Marke & Größe automatisch füllen'}
+              </Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={18} color={theme.accent} />
+          </TouchableOpacity>
 
           <View style={styles.imagePickerContainer}>
             <TouchableOpacity style={styles.imagePicker} onPress={handlePickImage}>
@@ -314,16 +362,36 @@ export default function SupplementLibraryScreen({ navigation }: any) {
           <View style={{ height: 30 }} />
         </KeyboardAwareScrollView>
       </SwipeableModal>
-    </SafeAreaView>
+
+      {/* Supplement Barcode Scanner */}
+      <SupplementBarcodeScannerModal
+        visible={scannerVisible}
+        onClose={() => setScannerVisible(false)}
+        onSelectSupplement={(scanned) => {
+          setEditingItem(null);
+          setName(scanned.name);
+          setBrand(scanned.brand || '');
+          setCategory(scanned.category);
+          setImageUri(scanned.imageUri || '');
+          setUnit(scanned.unit);
+          setContentPerUnit('1');
+          setUnitsPerBox(scanned.unitsPerBox?.toString() || '');
+          setCurrentInventory(scanned.currentInventory?.toString() || '');
+          setBarcode(scanned.barcode);
+          setModalVisible(true);
+        }}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#121212' },
-  header: { flexDirection: 'row', alignItems: 'center', padding: 20, paddingTop: 10 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, minHeight: 44, marginBottom: 14, paddingTop: 0 },
   backBtn: { marginRight: 15 },
-  title: { color: 'white', fontSize: 24, fontWeight: 'bold' },
-  addBtnHeader: { backgroundColor: '#00D2FF', width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
+  title: { color: 'white', fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+  addBtnHeader: { backgroundColor: '#00D2FF', width: 38, height: 38, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  scanBtnHeader: { width: 38, height: 38, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 8, borderWidth: 1 },
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E1E1E', marginHorizontal: 20, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 15 },
   searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, color: 'white', fontSize: 16 },
@@ -372,5 +440,29 @@ const styles = StyleSheet.create({
   saveBtn: { backgroundColor: '#00D2FF', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   saveBtnText: { color: '#000', fontSize: 16, fontWeight: 'bold' },
   deleteBtn: { backgroundColor: '#FF525220', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 12, borderWidth: 1, borderColor: '#FF525250' },
-  deleteBtnText: { color: '#FF5252', fontSize: 16, fontWeight: 'bold' }
+  deleteBtnText: { color: '#FF5252', fontSize: 16, fontWeight: 'bold' },
+  scanBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  scanBannerIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanBannerTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  scanBannerSub: {
+    fontSize: 11,
+    color: '#8E96A0',
+    marginTop: 2,
+  },
 });

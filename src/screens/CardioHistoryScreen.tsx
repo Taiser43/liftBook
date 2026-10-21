@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, Dimensions, ScrollView } from 'react-native';
 import { useCardioStore, CardioSession, CardioActivityType, generateMockCardioSessions } from '../store/useCardioStore';
+import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useBottomSpacing } from '../hooks/useBottomSpacing';
 
 export default function CardioHistoryScreen({ navigation }: any) {
   const bottomSpacing = useBottomSpacing();
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const history = useCardioStore(state => state.history);
   const addSession = useCardioStore(state => state.addSession);
   const maxHR = useCardioStore(state => state.maxHeartRateSetting);
@@ -111,7 +115,7 @@ export default function CardioHistoryScreen({ navigation }: any) {
   };
 
   const getZoneColor = (index: number) => {
-    const colors = ['#00D2FF', '#30D158', '#FFD700', '#FF9500', '#FF3B30'];
+    const colors = [theme.accent, '#30D158', '#FFD700', '#FF9500', '#FF3B30'];
     return colors[index];
   };
 
@@ -119,7 +123,7 @@ export default function CardioHistoryScreen({ navigation }: any) {
     const isExpanded = expandedId === item.id;
     return (
       <TouchableOpacity 
-        style={styles.sessionCard} 
+        style={[styles.sessionCard, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder, borderWidth: 1 }]} 
         onPress={() => setExpandedId(isExpanded ? null : item.id)}
       >
         <View style={styles.sessionHeader}>
@@ -127,7 +131,7 @@ export default function CardioHistoryScreen({ navigation }: any) {
             <Text style={styles.sessionType}>{item.type} {item.testType ? `(${item.testType})` : ''}</Text>
             <Text style={styles.sessionDate}>{new Date(item.date).toLocaleDateString('de-DE')} • {item.source}</Text>
           </View>
-          <Text style={styles.sessionDistance}>{(item.distanceMeters / 1000).toFixed(2)} km</Text>
+          <Text style={[styles.sessionDistance, { color: theme.accent }]}>{(item.distanceMeters / 1000).toFixed(2)} km</Text>
         </View>
         
         <View style={styles.sessionQuickStats}>
@@ -141,7 +145,7 @@ export default function CardioHistoryScreen({ navigation }: any) {
             <View style={styles.divider} />
             {renderHRZones(item)}
             <TouchableOpacity 
-              style={{ backgroundColor: '#00D2FF', padding: 12, borderRadius: 8, marginTop: 15, alignItems: 'center' }}
+              style={{ backgroundColor: theme.accent, padding: 12, borderRadius: 8, marginTop: 15, alignItems: 'center' }}
               onPress={() => navigation.navigate('CardioSessionDetail', { sessionId: item.id })}
             >
               <Text style={{ color: '#121212', fontWeight: 'bold' }}>View Full Details</Text>
@@ -160,7 +164,7 @@ export default function CardioHistoryScreen({ navigation }: any) {
         </TouchableOpacity>
         <Text style={styles.title} onPress={() => generateMockCardioSessions()}>History (Tap for Mock)</Text>
         <TouchableOpacity onPress={importFromHealthConnect}>
-          <MaterialCommunityIcons name="sync" size={28} color="#00D2FF" />
+          <MaterialCommunityIcons name="sync" size={28} color={theme.accent} />
         </TouchableOpacity>
       </View>
       
@@ -169,7 +173,7 @@ export default function CardioHistoryScreen({ navigation }: any) {
           {ALL_TYPES.map(type => (
             <TouchableOpacity 
               key={type} 
-              style={[styles.filterPill, selectedTypes.includes(type) && styles.filterPillActive]}
+              style={[styles.filterPill, selectedTypes.includes(type) && [styles.filterPillActive, { backgroundColor: theme.accent, borderColor: theme.accent }]]}
               onPress={() => toggleType(type)}
             >
               <Text style={[styles.filterPillText, selectedTypes.includes(type) && styles.filterPillTextActive]}>{type}</Text>
@@ -187,7 +191,7 @@ export default function CardioHistoryScreen({ navigation }: any) {
           data={filteredHistory}
           keyExtractor={item => item.id}
           renderItem={renderItem}
-          contentContainerStyle={{ padding: 20 }}
+          contentContainerStyle={{ padding: 20, paddingBottom: bottomSpacing }}
         />
       )}
     </SafeAreaView>

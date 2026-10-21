@@ -4,17 +4,20 @@ import { View, Text, StyleSheet, TouchableOpacity, TextInput, Modal, Image } fro
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppStore, RecipeIngredient, showCustomAlert } from '../store/store';
+import { useAppStore, Recipe, RecipeIngredient, showCustomAlert } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 import SwipeableModal from './SwipeableModal';
 
 interface EnhancedRecipeBuilderProps {
   visible: boolean;
   onClose: () => void;
+  recipeToEdit?: Recipe | null;
 }
 
-export default function EnhancedRecipeBuilder({ visible, onClose }: EnhancedRecipeBuilderProps) {
+export default function EnhancedRecipeBuilder({ visible, onClose, recipeToEdit }: EnhancedRecipeBuilderProps) {
   const insets = useSafeAreaInsets();
-  const { addSavedMeal, ingredients, incrementIngredientUsage } = useAppStore();
+  const { addSavedMeal, updateSavedMeal, ingredients, incrementIngredientUsage, accentThemeId } = useAppStore();
+  const theme = getAppTheme(accentThemeId);
 
   const [builderName, setBuilderName] = useState('');
   const [totalServings, setTotalServings] = useState('1');
@@ -24,7 +27,19 @@ export default function EnhancedRecipeBuilder({ visible, onClose }: EnhancedReci
   const [ingredientSearch, setIngredientSearch] = useState('');
   const [ingredientSort, setIngredientSort] = useState<'usage' | 'name' | 'calories' | 'protein'>('usage');
 
-
+  React.useEffect(() => {
+    if (visible && recipeToEdit) {
+      setBuilderName(recipeToEdit.name || '');
+      setTotalServings((recipeToEdit.totalServings || 1).toString());
+      setBuilderIngredients(recipeToEdit.ingredients ? [...recipeToEdit.ingredients] : []);
+      setImageUri(recipeToEdit.imageUri || null);
+    } else if (visible && !recipeToEdit) {
+      setBuilderName('');
+      setTotalServings('1');
+      setBuilderIngredients([]);
+      setImageUri(null);
+    }
+  }, [visible, recipeToEdit]);
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -54,17 +69,31 @@ export default function EnhancedRecipeBuilder({ visible, onClose }: EnhancedReci
       fat += req.ingredient.fat * ratio;
     });
 
-    addSavedMeal({
-      id: Date.now().toString(),
-      name: builderName,
-      ingredients: builderIngredients,
-      totalServings: parsedServings,
-      calories: Math.round(cal),
-      protein: Math.round(pro),
-      carbs: Math.round(car),
-      fat: Math.round(fat),
-      imageUri: imageUri || undefined
-    });
+    if (recipeToEdit) {
+      updateSavedMeal({
+        ...recipeToEdit,
+        name: builderName.trim(),
+        ingredients: builderIngredients,
+        totalServings: parsedServings,
+        calories: Math.round(cal),
+        protein: Math.round(pro),
+        carbs: Math.round(car),
+        fat: Math.round(fat),
+        imageUri: imageUri || undefined,
+      });
+    } else {
+      addSavedMeal({
+        id: Date.now().toString(),
+        name: builderName.trim(),
+        ingredients: builderIngredients,
+        totalServings: parsedServings,
+        calories: Math.round(cal),
+        protein: Math.round(pro),
+        carbs: Math.round(car),
+        fat: Math.round(fat),
+        imageUri: imageUri || undefined,
+      });
+    }
     
     // Reset and close
     setBuilderName('');
@@ -114,9 +143,9 @@ export default function EnhancedRecipeBuilder({ visible, onClose }: EnhancedReci
 
   return (
     <Modal visible={visible} animationType="slide">
-      <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
-        <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>Create Recipe</Text>
+      <View style={[styles.modalContainer, { backgroundColor: theme.subCardBg || '#121212', paddingTop: insets.top }]}>
+        <View style={[styles.modalHeader, { backgroundColor: theme.cardBg || '#181818', borderBottomColor: theme.subtleBorder || '#333' }]}>
+          <Text style={styles.modalTitle}>{recipeToEdit ? 'Rezept bearbeiten' : 'Create Recipe'}</Text>
           <TouchableOpacity onPress={onClose}>
             <MaterialCommunityIcons name="close" size={28} color="#FFF" />
           </TouchableOpacity>
@@ -126,7 +155,7 @@ export default function EnhancedRecipeBuilder({ visible, onClose }: EnhancedReci
           {/* Basics */}
           <Text style={styles.sectionHeader}>Recipe Details</Text>
           
-          <TouchableOpacity style={styles.imagePickerBtn} onPress={pickImage}>
+          <TouchableOpacity style={[styles.imagePickerBtn, { backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333' }]} onPress={pickImage}>
             {imageUri ? (
               <Image source={{ uri: imageUri }} style={styles.imagePickerImg} />
             ) : (
@@ -137,13 +166,13 @@ export default function EnhancedRecipeBuilder({ visible, onClose }: EnhancedReci
             )}
           </TouchableOpacity>
           <TextInput 
-            style={styles.textInputFull} 
+            style={[styles.textInputFull, { backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333' }]} 
             placeholder="Recipe Name (e.g. Chicken Rice)" 
             placeholderTextColor="#666" 
             value={builderName} 
             onChangeText={setBuilderName} 
           />
-          <View style={styles.rowInput}>
+          <View style={[styles.rowInput, { backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333' }]}>
             <Text style={styles.rowInputLabel}>Total Servings you are cooking</Text>
             <TextInput 
               style={styles.rowInputField} 
@@ -154,11 +183,11 @@ export default function EnhancedRecipeBuilder({ visible, onClose }: EnhancedReci
           </View>
 
           {/* Real-time Preview */}
-          <View style={styles.previewCard}>
+          <View style={[styles.previewCard, { backgroundColor: theme.cardBg || '#181818', borderColor: theme.cardBorder || '#333' }]}>
              <Text style={styles.previewTitle}>Macros Per Serving</Text>
              <View style={styles.previewMacrosRow}>
                 <View style={styles.previewMacro}>
-                   <Text style={[styles.previewMacroVal, { color: '#00D2FF' }]}>{perServingCal}</Text>
+                   <Text style={[styles.previewMacroVal, { color: theme.accent || '#00D2FF' }]}>{perServingCal}</Text>
                    <Text style={styles.previewMacroLabel}>kcal</Text>
                 </View>
                 <View style={styles.previewMacro}>
@@ -179,7 +208,7 @@ export default function EnhancedRecipeBuilder({ visible, onClose }: EnhancedReci
           {/* Ingredients */}
           <Text style={styles.sectionHeader}>Ingredients ({builderIngredients.length})</Text>
           {builderIngredients.map(req => (
-            <View key={req.ingredient.id} style={styles.builderItem}>
+            <View key={req.ingredient.id} style={[styles.builderItem, { backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333' }]}>
               <Text style={styles.builderName} numberOfLines={1}>{req.ingredient.name}</Text>
               <TextInput 
                 style={styles.builderInput} 
@@ -194,13 +223,13 @@ export default function EnhancedRecipeBuilder({ visible, onClose }: EnhancedReci
             </View>
           ))}
           
-          <TouchableOpacity style={styles.addIngBtn} onPress={() => setIngredientPickerVisible(true)}>
-            <Text style={styles.addIngBtnText}>+ Add Ingredient</Text>
+          <TouchableOpacity style={[styles.addIngBtn, { backgroundColor: theme.accentSoftBg || 'rgba(10, 132, 255, 0.1)' }]} onPress={() => setIngredientPickerVisible(true)}>
+            <Text style={[styles.addIngBtnText, { color: theme.accent || '#0A84FF' }]}>+ Add Ingredient</Text>
           </TouchableOpacity>
         </ScrollView>
         
-        <TouchableOpacity style={styles.fullBtn} onPress={handleSaveRecipe}>
-          <Text style={styles.fullBtnText}>Save Recipe</Text>
+        <TouchableOpacity style={[styles.fullBtn, { backgroundColor: theme.accent || '#0A84FF' }]} onPress={handleSaveRecipe}>
+          <Text style={[styles.fullBtnText, { color: '#000' }]}>{recipeToEdit ? 'Änderungen speichern' : 'Save Recipe'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -212,7 +241,7 @@ export default function EnhancedRecipeBuilder({ visible, onClose }: EnhancedReci
         <Text style={styles.modalTitle}>Select Ingredient</Text>
         
         <TextInput
-          style={[styles.textInputFull, { marginTop: 16, marginBottom: 8 }]}
+          style={[styles.textInputFull, { marginTop: 16, marginBottom: 8, backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333' }]}
           placeholder="Search ingredients..."
           placeholderTextColor="#666"
           value={ingredientSearch}
@@ -223,17 +252,23 @@ export default function EnhancedRecipeBuilder({ visible, onClose }: EnhancedReci
           {(['usage', 'name', 'calories', 'protein'] as const).map(s => (
             <TouchableOpacity 
               key={s} 
-              style={[styles.sortChip, ingredientSort === s && styles.sortChipActive]}
+              style={[
+                styles.sortChip, 
+                ingredientSort === s && { backgroundColor: theme.accentSoftBg || 'rgba(0, 210, 255, 0.15)', borderColor: theme.accent || '#00D2FF' }
+              ]}
               onPress={() => setIngredientSort(s)}
             >
-              <Text style={[styles.sortChipText, ingredientSort === s && styles.sortChipTextActive]}>By {s}</Text>
+              <Text style={[
+                styles.sortChipText, 
+                ingredientSort === s && { color: theme.accent || '#00D2FF' }
+              ]}>By {s}</Text>
             </TouchableOpacity>
           ))}
         </View>
 
         <ScrollView enableOnAndroid={true} extraScrollHeight={20} keyboardShouldPersistTaps="handled" style={{ maxHeight: 400 }}>
           {sortedIngredients.filter(i => i.name.toLowerCase().includes(ingredientSearch.toLowerCase())).map(ing => (
-            <TouchableOpacity key={ing.id} style={styles.poolItem} onPress={() => {
+            <TouchableOpacity key={ing.id} style={[styles.poolItem, { backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333' }]} onPress={() => {
               if (!builderIngredients.find(r => r.ingredient.id === ing.id)) {
                 setBuilderIngredients(prev => [...prev, { ingredient: ing, amount: 100 }]);
               }

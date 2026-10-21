@@ -4,6 +4,7 @@ import type { Device } from 'react-native-ble-plx';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppStore } from '../store/store';
 import { Buffer } from 'buffer';
+import { getAppTheme } from '../utils/theme';
 
 const HR_SERVICE_UUID = '0000180d-0000-1000-8000-00805f9b34fb';
 const HR_MEASUREMENT_CHAR_UUID = '00002a37-0000-1000-8000-00805f9b34fb';
@@ -15,7 +16,8 @@ interface Props {
 
 export default function BluetoothManager({ visible, onClose }: Props) {
   const managerRef = React.useRef<any>(null);
-  const { connectedDeviceId, setConnectedDevice, setCurrentHeartRate, currentHeartRate } = useAppStore();
+  const { connectedDeviceId, setConnectedDevice, setCurrentHeartRate, currentHeartRate, accentThemeId } = useAppStore();
+  const theme = getAppTheme(accentThemeId);
   const [isScanning, setIsScanning] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]);
 
@@ -168,8 +170,8 @@ export default function BluetoothManager({ visible, onClose }: Props) {
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={styles.container}>
-        <View style={styles.header}>
+      <View style={[styles.container, { backgroundColor: theme.subCardBg || '#121212' }]}>
+        <View style={[styles.header, { borderBottomColor: theme.subtleBorder || '#333' }]}>
           <Text style={styles.title}>Bluetooth Devices</Text>
           <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
             <MaterialCommunityIcons name="close" size={24} color="#FFF" />
@@ -189,7 +191,7 @@ export default function BluetoothManager({ visible, onClose }: Props) {
             </View>
           ) : (
             <>
-              <TouchableOpacity style={styles.scanBtn} onPress={startScan} disabled={isScanning}>
+              <TouchableOpacity style={[styles.scanBtn, { backgroundColor: theme.accent || '#00D2FF' }]} onPress={startScan} disabled={isScanning}>
                 <Text style={styles.scanBtnText}>{isScanning ? 'Scanning...' : 'Scan for Heart Rate Monitors'}</Text>
               </TouchableOpacity>
 
@@ -197,7 +199,10 @@ export default function BluetoothManager({ visible, onClose }: Props) {
                 data={devices}
                 keyExtractor={item => item.id}
                 renderItem={({ item }) => (
-                  <TouchableOpacity style={styles.deviceItem} onPress={() => connectToDevice(item)}>
+                  <TouchableOpacity 
+                    style={[styles.deviceItem, { backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333' }]} 
+                    onPress={() => connectToDevice(item)}
+                  >
                     <Text style={styles.deviceName}>{item.name}</Text>
                     <Text style={styles.deviceId}>{item.id}</Text>
                   </TouchableOpacity>

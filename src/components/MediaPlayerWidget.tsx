@@ -1,15 +1,27 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, Image, ScrollView, Easing, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Image, ScrollView, Easing, Alert, ActivityIndicator } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useMusicStore, Playlist } from '../store/useMusicStore';
+import { useMusicStore, Playlist, Song } from '../store/useMusicStore';
 import * as FileSystem from 'expo-file-system/legacy';
 import { getResolvedUri } from '../utils/uriResolver';
-import TrackPlayer, { usePlaybackState, useProgress, State, Capability, Event } from 'react-native-track-player';
+import TrackPlayer, { usePlaybackState, useProgress, useActiveTrack, State, Capability, Event } from 'react-native-track-player';
 
 import PlaylistModal from './PlaylistModal';
 import MusicSettingsModal from './MusicSettingsModal';
 import YouTubeDownloaderModal from './YouTubeDownloaderModal';
+import MusicRecommendationsModal from './MusicRecommendationsModal';
+import MusicSearchModal from './MusicSearchModal';
+import FavoritesModal from './FavoritesModal';
+import DownloadedSongsModal from './DownloadedSongsModal';
+import NowPlayingModal from './NowPlayingModal';
+import AllPlaylistsModal from './AllPlaylistsModal';
+import { resolveAudioStreamUrl } from '../services/streamingMusicService';
+import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
+import { triggerLight } from '../utils/haptics';
+
+let isProgrammaticChange = false;
 
 // Initialize TrackPlayer once when the module loads
 let isPlayerSetup = false;
@@ -17,7 +29,11 @@ const setupPlayer = async () => {
   if (isPlayerSetup) return;
   try {
     await TrackPlayer.setupPlayer({
-      maxCacheSize: 1024 * 5,
+      maxCacheSize: 1024 * 100, // 100 MB cache for lookahead buffering
+      minBuffer: 15,            // 15 seconds min buffer
+      maxBuffer: 50,            // 50 seconds max buffer
+      playBuffer: 0.5,          // 0.5s playback resume on seek (reduces seek latency by ~80%)
+      backBuffer: 30,           // Keep 30s buffer behind playhead for instant backwards scrubbing
       autoHandleInterruptions: false,
     });
     await TrackPlayer.updateOptions({
@@ -48,17 +64,32 @@ const setupPlayer = async () => {
       }
     });
 
-
     TrackPlayer.addEventListener(Event.PlaybackActiveTrackChanged, async (event) => {
        if (event.track && event.track.id) {
           const state = useMusicStore.getState();
+          // Avoid transient track 0 during initial load
+          if (isProgrammaticChange && state.currentSongId && state.currentSongId !== event.track.id) {
+             return;
+          }
           // Find if we are currently playing a queue song
-          if (state.currentQueueSong && state.currentQueueSong.id === event.track.id) {
-             return; // Already correct
+          if (state.currentQueueSong) {
+             if (state.currentQueueSong.id === event.track.id) {
+                return; // Already correct
+             }
+             useMusicStore.setState({ currentSongId: event.track.id, currentQueueSong: null });
+             return;
           }
           if (state.currentSongId !== event.track.id) {
              useMusicStore.setState({ currentSongId: event.track.id });
           }
+       }
+    });
+
+    TrackPlayer.addEventListener(Event.PlaybackQueueEnded, async () => {
+       if (isProgrammaticChange) return;
+       const state = useMusicStore.getState();
+       if (state.isPlaying) {
+          state.playNext();
        }
     });
 
@@ -70,7 +101,10 @@ const setupPlayer = async () => {
 export default function MediaPlayerWidget({ width }: { width: number }) {
   const { 
     playlists, currentPlaylistId, currentSongId, currentQueueSong, isPlaying, isShuffle,
-    addPlaylist, setIsPlaying, toggleShuffle, playNext, playPrevious, setCurrentSong, incrementPlayCount
+    addPlaylist, setIsPlaying, toggleShuffle, playNext, playPrevious, setCurrentSong, incrementPlayCount, playStreamSongDirectly,
+    favoriteSongs, toggleFavoriteSong, isSongFavorite, getAllDownloadedSongs,
+    pinnedPlaylistIds, unpinPlaylist, pinPlaylist, deletePlaylist, isPlaylistPinned,
+    activeStreamPlaylist, playPlaylist
   } = useMusicStore();
 
   const playbackState = usePlaybackState();
@@ -79,15 +113,43 @@ export default function MediaPlayerWidget({ width }: { width: number }) {
   const [modalVisible, setModalVisible] = useState(false);
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [ytModalVisible, setYtModalVisible] = useState(false);
+  const [recModalVisible, setRecModalVisible] = useState(false);
+  const [searchModalVisible, setSearchModalVisible] = useState(false);
+  const [searchPrefill, setSearchPrefill] = useState<string>('');
+  const [favModalVisible, setFavModalVisible] = useState(false);
+  const [downloadedModalVisible, setDownloadedModalVisible] = useState(false);
+  const [allPlaylistsModalVisible, setAllPlaylistsModalVisible] = useState(false);
+  const [nowPlayingModalVisible, setNowPlayingModalVisible] = useState(false);
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
+
+  const storeDownloaded = useMusicStore(state => state.downloadedSongs);
+  const downloadedSongs = getAllDownloadedSongs();
 
   const downloadProgress = useMusicStore(state => state.downloadProgress);
 
   const spinAnim = useRef(new Animated.Value(0)).current;
   const [isReady, setIsReady] = useState(false);
+  const [isRestreaming, setIsRestreaming] = useState(false);
+  const [slidingPos, setSlidingPos] = useState<number | null>(null);
+  const preloadTokenRef = useRef(0);
+  const isPreloadingRef = useRef(false);
+  const isDirectlyPlayingSongIdRef = useRef<string | null>(null);
 
-  const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-  const currentSong = currentQueueSong || currentPlaylist?.songs.find(s => s.id === currentSongId);
+  const activeTrack = useActiveTrack();
+  const currentPlaylist = playlists.find(p => p.id === currentPlaylistId) || 
+    (activeStreamPlaylist && activeStreamPlaylist.id === currentPlaylistId ? activeStreamPlaylist : null);
+  const currentSong = useMusicStore(state => state.getCurrentSong?.() || null);
+
+  const effectiveSong: Song | null = currentSong || (activeTrack ? {
+    id: activeTrack.id,
+    title: activeTrack.title || 'Unknown Title',
+    artist: activeTrack.artist || 'Unknown Artist',
+    coverUri: activeTrack.artwork as string,
+    durationMillis: activeTrack.duration ? activeTrack.duration * 1000 : 180000,
+    uri: activeTrack.url,
+    playCount: 1,
+    playHistory: [],
+  } as Song : null);
 
   const isCurrentlyPlaying = playbackState.state === State.Playing;
 
@@ -129,94 +191,194 @@ export default function MediaPlayerWidget({ width }: { width: number }) {
   // Load new song into TrackPlayer when song changes in Zustand
   useEffect(() => {
     if (!isReady) return;
-    if (currentSongId || currentQueueSong) {
-      const loadTrack = async () => {
-        try {
-          if (currentQueueSong) {
-             const resolvedQueueUri = getResolvedUri(currentQueueSong.uri);
-             try {
-               const fileInfo = await FileSystem.getInfoAsync(resolvedQueueUri || '');
-               if (!fileInfo.exists) {
-                  Alert.alert("Song nicht gefunden", "Die Audiodatei existiert nicht mehr.");
-                  setIsPlaying(false);
-                  return;
-               }
-             } catch(e) { console.warn("FS Check failed, continuing anyway", e); }
-             await TrackPlayer.reset();
-             await TrackPlayer.add([{
-                id: currentQueueSong.id,
-                url: resolvedQueueUri || currentQueueSong.uri,
-                title: currentQueueSong.title,
-                artist: currentQueueSong.artist || 'Unknown Artist',
-                artwork: getResolvedUri(currentQueueSong.coverUri),
-             }]);
-             if (isPlaying) await TrackPlayer.play();
-             return;
-          }
+    const targetSong = useMusicStore.getState().getCurrentSong();
+    if (!targetSong) return;
 
-          const playlist = playlists.find(p => p.id === currentPlaylistId);
-          if (!playlist) return;
-          
-          const currentIndex = playlist.songs.findIndex(s => s.id === currentSongId);
-          if (currentIndex === -1) return;
-          
-          // Check if the current queue already matches the playlist to avoid resetting
-          const queue = await TrackPlayer.getQueue();
-          let needsFullLoad = true;
-          if (queue && queue.length === playlist.songs.length && queue.length > 0) {
-              if (queue[0].id === playlist.songs[0].id) {
-                  needsFullLoad = false;
-              }
-          }
-          
-          // Check if the current song file actually exists on device BEFORE attempting to play
-          const currentSongObj = playlist.songs[currentIndex];
-          if (currentSongObj) {
-             const resolvedSongUri = getResolvedUri(currentSongObj.uri);
-             try {
-               const fileInfo = await FileSystem.getInfoAsync(resolvedSongUri || '');
-               if (!fileInfo.exists) {
-                  Alert.alert(
-                    "Song nicht gefunden",
-                    "Die Audiodatei existiert nicht mehr. Dies passiert, wenn alte Lieder aus dem temporären Cache gelöscht wurden. Bitte importiere deine Lieder neu, das neue System speichert sie nun dauerhaft!"
-                  );
-                  setIsPlaying(false);
-                  return;
-               }
-             } catch(e) { console.warn("FS Check failed, continuing anyway", e); }
-          }
+    const loadTrack = async () => {
+      try {
+        if (isDirectlyPlayingSongIdRef.current === targetSong.id) {
+          // Handled directly by handlePlayStreamSong, skip to avoid double TrackPlayer.reset() collision
+          isDirectlyPlayingSongIdRef.current = null;
+          return;
+        }
 
-          if (needsFullLoad) {
-            await TrackPlayer.reset();
-            const tracks = playlist.songs.map(song => ({
-              id: song.id,
-              url: getResolvedUri(song.uri) || song.uri,
-              title: song.title,
-              artist: song.artist || 'Unknown Artist',
-              artwork: getResolvedUri(song.coverUri),
-            }));
-            await TrackPlayer.add(tracks);
-          }
-          
-          const currentTrackIndex = await TrackPlayer.getActiveTrackIndex();
-          if (currentTrackIndex !== currentIndex) {
-            await TrackPlayer.skip(currentIndex);
-          }
-          
-          if (isPlaying) {
+        const activeTrack = await TrackPlayer.getActiveTrack();
+        if (activeTrack && activeTrack.id === targetSong.id) {
+          // Track is already active in TrackPlayer, avoid duplicate reload
+          if (isPlaying && playbackState.state !== State.Playing) {
             await TrackPlayer.play();
           }
-        } catch (e) {
-          console.error('TrackPlayer error loading track:', e);
-          // If skip fails, we can force a full reload next time
-          try {
-             await TrackPlayer.reset();
-          } catch(e2) {}
+          // Replenish 5-song lookahead buffer ahead of the currently playing track
+          preloadUpcomingTracks(targetSong.id);
+          return;
         }
-      };
-      loadTrack();
+
+        let rawUri = targetSong.cachedUri || targetSong.streamUrl || targetSong.uri;
+        let resolvedUri = getResolvedUri(rawUri) || rawUri;
+        let isLocalValid = false;
+
+        if (resolvedUri && (resolvedUri.startsWith('file://') || resolvedUri.startsWith('/'))) {
+          try {
+            let fileInfo = await FileSystem.getInfoAsync(resolvedUri);
+            if (fileInfo.exists && (fileInfo.size === undefined || fileInfo.size > 10000)) {
+              isLocalValid = true;
+            } else {
+              const filename = resolvedUri.split('/').pop();
+              const docDir = (FileSystem as any).documentDirectory;
+              const altPath1 = `${docDir}${filename}`;
+              const altPath2 = `${docDir}music_cache/${filename}`;
+              const alt1 = await FileSystem.getInfoAsync(altPath1);
+              if (alt1.exists && (alt1.size === undefined || alt1.size > 10000)) {
+                resolvedUri = altPath1;
+                isLocalValid = true;
+              } else {
+                const alt2 = await FileSystem.getInfoAsync(altPath2);
+                if (alt2.exists && (alt2.size === undefined || alt2.size > 10000)) {
+                  resolvedUri = altPath2;
+                  isLocalValid = true;
+                }
+              }
+            }
+          } catch(e) {
+            isLocalValid = false;
+          }
+        }
+
+        if (!isLocalValid) {
+          if (!resolvedUri || (!resolvedUri.startsWith('http://') && !resolvedUri.startsWith('https://'))) {
+            try {
+              resolvedUri = await resolveAudioStreamUrl(targetSong as any);
+            } catch (e) {
+              console.warn('[MediaPlayer] Failed resolving online stream URL:', e);
+              return;
+            }
+          }
+        }
+
+        isProgrammaticChange = true;
+        await TrackPlayer.reset();
+        await TrackPlayer.add([{
+          id: targetSong.id,
+          url: resolvedUri,
+          title: targetSong.title,
+          artist: targetSong.artist || 'Unknown Artist',
+          artwork: getResolvedUri(targetSong.coverUri || currentPlaylist?.coverUri) || targetSong.coverUri || currentPlaylist?.coverUri,
+          duration: (targetSong.durationMillis && targetSong.durationMillis > 0)
+            ? Math.round(targetSong.durationMillis / 1000)
+            : 180,
+        }]);
+        isProgrammaticChange = false;
+
+        if (isPlaying) {
+          await TrackPlayer.play();
+        }
+
+        setTimeout(() => {
+          preloadUpcomingTracks(targetSong.id);
+        }, 800);
+      } catch (e) {
+        console.error('[MediaPlayer] TrackPlayer error loading track:', e);
+        try {
+          await TrackPlayer.reset();
+        } catch(e2) {}
+      } finally {
+        isProgrammaticChange = false;
+      }
+    };
+
+    loadTrack();
+  }, [currentSongId, currentQueueSong, currentPlaylistId, isReady]);
+
+  const preloadUpcomingTracks = async (currentTrackId: string) => {
+    const token = ++preloadTokenRef.current;
+
+    // Yield if another preload loop is currently running
+    while (isPreloadingRef.current) {
+      await new Promise(r => setTimeout(r, 60));
+      if (preloadTokenRef.current !== token) return;
     }
-  }, [currentSongId, currentQueueSong, isReady]);
+
+    isPreloadingRef.current = true;
+    try {
+      const state = useMusicStore.getState();
+      const upcomingSongs = state.getNextSongs(5);
+      if (upcomingSongs.length === 0) return;
+
+      for (let i = 0; i < upcomingSongs.length; i++) {
+        if (preloadTokenRef.current !== token) return;
+        const nextSong = upcomingSongs[i];
+        if (!nextSong || nextSong.id === currentTrackId) continue;
+
+        // Check if this song is already in TrackPlayer queue from activeTrack onwards
+        const currentQueue = await TrackPlayer.getQueue();
+        const activeIndex = await TrackPlayer.getActiveTrackIndex();
+        const upcomingQueue = (activeIndex !== null && activeIndex !== undefined && activeIndex >= 0)
+          ? currentQueue.slice(activeIndex)
+          : currentQueue;
+
+        if (upcomingQueue.some(t => t.id === nextSong.id)) {
+          continue;
+        }
+
+        // 1. Check local file if cached or downloaded
+        let rawUri = nextSong.cachedUri || nextSong.streamUrl || nextSong.uri;
+        let resolvedUri = getResolvedUri(rawUri) || rawUri;
+        let isLocalValid = false;
+
+        if (resolvedUri && (resolvedUri.startsWith('file://') || resolvedUri.startsWith('/'))) {
+          try {
+            const fileInfo = await FileSystem.getInfoAsync(resolvedUri);
+            if (fileInfo.exists && (fileInfo.size === undefined || fileInfo.size > 10000)) {
+              isLocalValid = true;
+            }
+          } catch (e) {
+            isLocalValid = false;
+          }
+        }
+
+        // 2. If online stream: resolve URL ahead of time
+        if (!isLocalValid) {
+          if (!resolvedUri || (!resolvedUri.startsWith('http://') && !resolvedUri.startsWith('https://'))) {
+            try {
+              resolvedUri = await resolveAudioStreamUrl(nextSong as any);
+              if (resolvedUri) {
+                useMusicStore.getState().updateSongStreamUrl(nextSong.id, resolvedUri);
+              }
+            } catch (e) {
+              console.warn(`[Preloader] Konnte Stream-URL für "${nextSong.title}" nicht auflösen:`, e);
+              continue;
+            }
+          }
+        }
+
+        if (preloadTokenRef.current !== token) return;
+
+        // Ensure player is still active
+        const activeTrack = await TrackPlayer.getActiveTrack();
+        if (!activeTrack) return;
+
+        await TrackPlayer.add([{
+          id: nextSong.id,
+          url: resolvedUri,
+          title: nextSong.title,
+          artist: nextSong.artist || 'Unknown Artist',
+          artwork: getResolvedUri(nextSong.coverUri || currentPlaylist?.coverUri) || nextSong.coverUri || currentPlaylist?.coverUri,
+          duration: (nextSong.durationMillis && nextSong.durationMillis > 0)
+            ? Math.round(nextSong.durationMillis / 1000)
+            : 180,
+        }]);
+
+        console.log(`[Preloader] ⚡ Vorab gepuffert (${i + 1}/${upcomingSongs.length}): "${nextSong.title}" (${nextSong.artist})`);
+
+        // Small delay to yield network and JS thread
+        await new Promise(r => setTimeout(r, 120));
+      }
+    } catch (e) {
+      console.warn('[Preloader] Error preloading tracks:', e);
+    } finally {
+      isPreloadingRef.current = false;
+    }
+  };
 
 
 
@@ -263,26 +425,221 @@ export default function MediaPlayerWidget({ width }: { width: number }) {
      }
   }, [progress.position, progress.duration, currentSongId, currentQueueSong, crossfadeSeconds]);
 
+  const handlePlayStreamSong = async (song: Omit<Song, 'playCount'>, forceFreshStream: boolean = false) => {
+    try {
+      setIsRestreaming(true);
+
+      // 1. Resolve offline local file if cached
+      let streamUrl = song.cachedUri || song.streamUrl || song.uri;
+      const offlineUri = getResolvedUri(streamUrl);
+      let isOfflineTrack = false;
+
+      if (offlineUri && (offlineUri.startsWith('file://') || offlineUri.startsWith('/'))) {
+        try {
+          let fileInfo = await FileSystem.getInfoAsync(offlineUri);
+          if (fileInfo.exists && (fileInfo.size === undefined || fileInfo.size > 10000)) {
+            streamUrl = offlineUri;
+            isOfflineTrack = true;
+          } else {
+            const filename = offlineUri.split('/').pop();
+            const docDir = (FileSystem as any).documentDirectory;
+            const altPath1 = `${docDir}${filename}`;
+            const altPath2 = `${docDir}music_cache/${filename}`;
+            const alt1 = await FileSystem.getInfoAsync(altPath1);
+            if (alt1.exists && (alt1.size === undefined || alt1.size > 10000)) {
+              streamUrl = altPath1;
+              isOfflineTrack = true;
+            } else {
+              const alt2 = await FileSystem.getInfoAsync(altPath2);
+              if (alt2.exists && (alt2.size === undefined || alt2.size > 10000)) {
+                streamUrl = altPath2;
+                isOfflineTrack = true;
+              }
+            }
+          }
+        } catch (e) {
+          isOfflineTrack = false;
+        }
+      }
+
+      // If local file is missing, reset streamUrl so we don't try to fetch a missing local file:// URI!
+      if (!isOfflineTrack) {
+        if (streamUrl && (streamUrl.startsWith('file://') || streamUrl.startsWith('/'))) {
+          streamUrl = (song as any).videoId || song.streamUrl || song.id || '';
+        }
+      }
+
+      // If online stream and (forceFreshStream OR not a valid HTTP URL):
+      // Resolve a fresh, unexpired stream URL!
+      if (!isOfflineTrack && (forceFreshStream || (!streamUrl.startsWith('http://') && !streamUrl.startsWith('https://')))) {
+        try {
+          streamUrl = await resolveAudioStreamUrl(song as any, undefined, true);
+        } catch (e: any) {
+          console.warn('Failed resolving fresh stream URL:', e);
+          const existingHttp = song.streamUrl || song.uri;
+          if (existingHttp && (existingHttp.startsWith('http://') || existingHttp.startsWith('https://'))) {
+            streamUrl = existingHttp;
+          } else {
+            Alert.alert('Stream nicht verfügbar', e.message || 'Der Titel konnte online nicht neu gestartet werden. Bitte prüfe deine Internetverbindung.');
+            return;
+          }
+        }
+      } else if (!isOfflineTrack && (!streamUrl.startsWith('http://') && !streamUrl.startsWith('https://'))) {
+        try {
+          streamUrl = await resolveAudioStreamUrl(song as any);
+        } catch (e: any) {
+          console.warn('Failed resolving stream URL:', e);
+          Alert.alert('Stream nicht verfügbar', e.message || 'Der Titel konnte online nicht geladen werden.');
+          return;
+        }
+      }
+
+      const fullSong: Song = {
+        ...song,
+        durationMillis: song.durationMillis && song.durationMillis > 0 ? song.durationMillis : 180000,
+        uri: streamUrl,
+        streamUrl: streamUrl,
+        cachedUri: isOfflineTrack ? streamUrl : song.cachedUri,
+        isStream: !isOfflineTrack,
+        playCount: 1,
+        playHistory: [Date.now()]
+      };
+
+      isDirectlyPlayingSongIdRef.current = fullSong.id;
+      playStreamSongDirectly(fullSong);
+
+      isProgrammaticChange = true;
+      await TrackPlayer.reset();
+      await TrackPlayer.add([{
+        id: fullSong.id,
+        url: streamUrl,
+        title: fullSong.title,
+        artist: fullSong.artist || 'Unknown Artist',
+        artwork: getResolvedUri(fullSong.coverUri || currentPlaylist?.coverUri) || fullSong.coverUri || currentPlaylist?.coverUri,
+        duration: (fullSong.durationMillis && fullSong.durationMillis > 0)
+          ? Math.round(fullSong.durationMillis / 1000)
+          : 180,
+      }]);
+      isProgrammaticChange = false;
+      await TrackPlayer.play();
+      setIsPlaying(true);
+      setTimeout(() => {
+        preloadUpcomingTracks(fullSong.id);
+      }, 800);
+    } catch (e) {
+      console.warn('TrackPlayer play stream error:', e);
+    } finally {
+      setIsRestreaming(false);
+      isProgrammaticChange = false;
+      isDirectlyPlayingSongIdRef.current = null;
+    }
+  };
+
   const handlePlayPause = async () => {
     try {
       if (isCurrentlyPlaying) {
         await TrackPlayer.pause();
         setIsPlaying(false);
-      } else {
-        await TrackPlayer.play();
-        setIsPlaying(true);
+        return;
       }
+
+      if (!currentSong) {
+        return;
+      }
+
+      // Check if candidate URI actually exists on disk before deciding offline
+      const candidateUri = getResolvedUri(currentSong.cachedUri || currentSong.uri);
+      let isOfflineTrack = false;
+      if (candidateUri && (candidateUri.startsWith('file://') || candidateUri.startsWith('/'))) {
+        try {
+          const fi = await FileSystem.getInfoAsync(candidateUri);
+          if (fi.exists && (fi.size === undefined || fi.size > 10000)) {
+            isOfflineTrack = true;
+          }
+        } catch (e) {}
+      }
+
+      // Check active track in TrackPlayer
+      let activeTrack: any = null;
+      try {
+        activeTrack = await TrackPlayer.getActiveTrack();
+      } catch (e) {}
+
+      // 1. If already in TrackPlayer, resume immediately without re-resolving!
+      if (activeTrack && activeTrack.id === currentSong.id) {
+        try {
+          await TrackPlayer.play();
+          setIsPlaying(true);
+          preloadUpcomingTracks(currentSong.id);
+          return;
+        } catch (resumeErr) {
+          console.warn("TrackPlayer resume failed, falling back to reload/re-stream:", resumeErr);
+        }
+      }
+
+      // 2. If it's an offline track, or if it already has a valid HTTP streamUrl:
+      // Play it directly without forcing an unnecessary network resolution!
+      const existingUrl = currentSong.cachedUri || currentSong.streamUrl || currentSong.uri;
+      const isHttp = existingUrl && (existingUrl.startsWith('http://') || existingUrl.startsWith('https://'));
+
+      if (isOfflineTrack || isHttp) {
+        try {
+          await handlePlayStreamSong(currentSong, false);
+          return;
+        } catch (playErr) {
+          console.warn("Direct stream play failed, will try fresh resolution fallback:", playErr);
+        }
+      }
+
+      // 3. Only if direct play failed or URL is missing: resolve a fresh stream
+      await handlePlayStreamSong(currentSong, true);
     } catch (e) {
       console.warn("Play/Pause error:", e);
-      Alert.alert("Playback Error", "The song could not be played. It might have been deleted or corrupted.");
+      if (currentSong) {
+        try {
+          await handlePlayStreamSong(currentSong, false);
+        } catch (e2) {
+          Alert.alert("Wiedergabefehler", "Der Song konnte nicht gestartet werden. Bitte prüfe deine Internetverbindung.");
+        }
+      }
     }
   };
 
   const handleNext = async () => {
+    try {
+      const queue = await TrackPlayer.getQueue();
+      const activeIndex = await TrackPlayer.getActiveTrackIndex();
+      if (queue && activeIndex !== null && activeIndex !== undefined && activeIndex + 1 < queue.length) {
+        console.log('[MediaPlayer] ⚡ Instant skip using preloaded track in TrackPlayer!');
+        const nextTrack = queue[activeIndex + 1];
+        if (nextTrack && nextTrack.id) {
+          // ⚡ Immediate 0ms synchronous state update on touch
+          useMusicStore.setState({ currentSongId: nextTrack.id, currentQueueSong: null, isPlaying: true });
+        }
+        await TrackPlayer.skipToNext();
+        return;
+      }
+    } catch (e) {}
+
     playNext();
   };
 
   const handlePrevious = async () => {
+    try {
+      const queue = await TrackPlayer.getQueue();
+      const activeIndex = await TrackPlayer.getActiveTrackIndex();
+      if (queue && activeIndex !== null && activeIndex !== undefined && activeIndex > 0) {
+        console.log('[MediaPlayer] ⚡ Instant previous using preloaded track in TrackPlayer!');
+        const prevTrack = queue[activeIndex - 1];
+        if (prevTrack && prevTrack.id) {
+          // ⚡ Immediate 0ms synchronous state update on touch
+          useMusicStore.setState({ currentSongId: prevTrack.id, currentQueueSong: null, isPlaying: true });
+        }
+        await TrackPlayer.skipToPrevious();
+        return;
+      }
+    } catch (e) {}
+
     playPrevious();
   };
 
@@ -311,67 +668,301 @@ export default function MediaPlayerWidget({ width }: { width: number }) {
     }
   };
 
+  const handleOpenCurrentPlaylist = () => {
+    triggerLight();
+    if (currentPlaylistId === 'favorites') {
+      setFavModalVisible(true);
+      return;
+    }
+    if (currentPlaylistId === 'downloaded') {
+      setDownloadedModalVisible(true);
+      return;
+    }
+    const activeStream = useMusicStore.getState().activeStreamPlaylist;
+    if (activeStream && currentPlaylistId === activeStream.id) {
+      setSelectedPlaylist(activeStream);
+      setModalVisible(true);
+      return;
+    }
+    if (currentPlaylistId) {
+      const pl = playlists.find(p => p.id === currentPlaylistId);
+      if (pl) {
+        setSelectedPlaylist(pl);
+        setModalVisible(true);
+        return;
+      }
+    }
+    if (currentSong) {
+      const plWithSong = playlists.find(p => p.songs.some(s => s.id === currentSong.id));
+      if (plWithSong) {
+        setSelectedPlaylist(plWithSong);
+        setModalVisible(true);
+        return;
+      }
+      if (isSongFavorite(currentSong.id)) {
+        setFavModalVisible(true);
+        return;
+      }
+      const isDownloaded = downloadedSongs.some(s => s.id === currentSong.id);
+      if (isDownloaded) {
+        setDownloadedModalVisible(true);
+        return;
+      }
+    }
+    if (playlists.length > 0) {
+      setSelectedPlaylist(playlists[0]);
+      setModalVisible(true);
+    } else {
+      setAllPlaylistsModalVisible(true);
+    }
+  };
+
   const openPlaylist = (playlist: Playlist) => {
     setSelectedPlaylist(playlist);
     setModalVisible(true);
   };
 
-  const positionMillis = progress.position * 1000;
-  const durationMillis = progress.duration * 1000;
+  const handlePlaylistLongPress = (playlist: Playlist) => {
+    triggerLight();
+    Alert.alert(
+      playlist.name,
+      'Möchtest du diese Playlist von der Startansicht (Schnellzugriff) entfernen? Sie bleibt unter "Alle Playlists" gespeichert.',
+      [
+        {
+          text: '📌 Vom Start entfernen',
+          style: 'destructive',
+          onPress: () => {
+            unpinPlaylist(playlist.id);
+          }
+        },
+        {
+          text: '✏️ Öffnen',
+          onPress: () => openPlaylist(playlist)
+        },
+        {
+          text: '🗑️ Endgültig löschen',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Playlist löschen',
+              `Möchtest du "${playlist.name}" wirklich komplett aus der App löschen?`,
+              [
+                { text: 'Abbrechen', style: 'cancel' },
+                {
+                  text: 'Löschen',
+                  style: 'destructive',
+                  onPress: () => deletePlaylist(playlist.id)
+                }
+              ]
+            );
+          }
+        },
+        { text: 'Abbrechen', style: 'cancel' }
+      ]
+    );
+  };
+
+  const displayedPlaylists = playlists.filter(p => isPlaylistPinned(p.id));
+
+  const effectiveDurationMillis = (progress.duration && progress.duration > 0)
+    ? Math.round(progress.duration * 1000)
+    : (currentSong?.durationMillis && currentSong.durationMillis > 0
+      ? currentSong.durationMillis
+      : 180000);
+
+  const rawPositionMillis = Math.round(progress.position * 1000);
+  const positionMillis = Math.min(rawPositionMillis, effectiveDurationMillis);
+  const durationMillis = effectiveDurationMillis;
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
 
   return (
-    <View style={[styles.container, { width }]}>
-      <TouchableOpacity 
-        style={{ position: 'absolute', top: 12, right: 12, zIndex: 10 }}
-        onPress={() => setSettingsModalVisible(true)}
-      >
-        <MaterialCommunityIcons name="cog" size={20} color="#666" />
-      </TouchableOpacity>
+    <View style={[styles.container, { width, backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]}>
+      {/* Top Header Actions */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{
+            paddingHorizontal: 8,
+            paddingVertical: 2,
+            borderRadius: 10,
+            backgroundColor: theme.accentSoftBg,
+            borderWidth: 1,
+            borderColor: theme.accentBorder
+          }}>
+            <Text style={{ fontSize: 9, fontWeight: 'bold', color: theme.accent }}>
+              {currentSong?.cachedUri ? 'OFFLINE' : (currentSong?.isStream ? 'LIVE STREAM' : '320K HQ')}
+            </Text>
+          </View>
+        </View>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {/* Favoriten Quick Trigger */}
+          <TouchableOpacity
+            onPress={() => { triggerLight(); setFavModalVisible(true); }}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#FF005515',
+              borderWidth: 1,
+              borderColor: '#FF2A6D50',
+              paddingHorizontal: 8,
+              paddingVertical: 3,
+              borderRadius: 12,
+              gap: 4
+            }}
+          >
+            <MaterialCommunityIcons name="heart" size={12} color="#FF2A6D" />
+            <Text style={{ color: '#FF2A6D', fontSize: 10, fontWeight: 'bold' }}>
+              {favoriteSongs?.length > 0 ? `${favoriteSongs.length}` : 'Favs'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Heruntergeladen Quick Trigger */}
+          <TouchableOpacity
+            onPress={() => { triggerLight(); setDownloadedModalVisible(true); }}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: theme.accentSoftBg,
+              borderWidth: 1,
+              borderColor: theme.accentBorder,
+              paddingHorizontal: 8,
+              paddingVertical: 3,
+              borderRadius: 12,
+              gap: 4
+            }}
+          >
+            <MaterialCommunityIcons name="download" size={12} color={theme.accent} />
+            <Text style={{ color: theme.accent, fontSize: 10, fontWeight: 'bold' }}>
+              {downloadedSongs?.length > 0 ? `${downloadedSongs.length}` : 'Offline'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* PowerSong Quick Trigger */}
+          <TouchableOpacity
+            onPress={() => {
+              if (powerSong) {
+                triggerLight();
+                handlePlayPause();
+                handleSeek(powerSong.startPosition);
+              } else {
+                setNowPlayingModalVisible(true);
+              }
+            }}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#FF450020',
+              borderWidth: 1,
+              borderColor: '#FF450050',
+              paddingHorizontal: 6,
+              paddingVertical: 3,
+              borderRadius: 12,
+              gap: 2
+            }}
+          >
+            <MaterialCommunityIcons name="lightning-bolt" size={12} color="#FF5500" />
+            <Text style={{ color: '#FF5500', fontSize: 10, fontWeight: 'bold' }}>PR</Text>
+          </TouchableOpacity>
+
+          {/* Settings Modal */}
+          <TouchableOpacity onPress={() => setSettingsModalVisible(true)}>
+            <MaterialCommunityIcons name="cog" size={18} color="#666" />
+          </TouchableOpacity>
+        </View>
+      </View>
+
       <View style={styles.topSection}>
-        {/* Vinyl Record */}
-        <View style={styles.vinylContainer}>
+        {/* Vinyl Record - Tapping opens Current Playlist */}
+        <TouchableOpacity 
+          style={styles.vinylContainer}
+          activeOpacity={0.8}
+          onPress={handleOpenCurrentPlaylist}
+        >
           <Animated.View style={[styles.vinyl, { transform: [{ rotate: spin }] }]}>
             <View style={styles.vinylHole} />
-            {(currentSong?.coverUri || currentPlaylist?.coverUri) && (
+            {(effectiveSong?.coverUri || currentPlaylist?.coverUri) && (
               <Image 
-                source={{ uri: getResolvedUri(currentSong?.coverUri || currentPlaylist?.coverUri) }} 
+                source={{ uri: getResolvedUri(effectiveSong?.coverUri || currentPlaylist?.coverUri) }} 
                 style={styles.vinylCover} 
               />
             )}
           </Animated.View>
-        </View>
+        </TouchableOpacity>
 
         {/* Controls */}
         <View style={styles.controlsContainer}>
-          <Text style={styles.nowPlayingTitle} numberOfLines={1}>
-            {currentSong ? currentSong.title : 'Ready to Play'}
-          </Text>
-          <Text style={styles.nowPlayingArtist} numberOfLines={1}>
-            {currentSong ? currentSong.artist || 'Unknown' : 'Select a playlist'}
-          </Text>
-          
-          <Slider
-            style={{ width: '100%', height: 20 }}
-            minimumValue={0}
-            maximumValue={durationMillis || 1}
-            value={positionMillis}
-            minimumTrackTintColor="#00D2FF"
-            maximumTrackTintColor="#333"
-            thumbTintColor="#00D2FF"
-            onSlidingComplete={async (value) => handleSeek(value / 1000)}
-          />
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 4 }}>
-            <Text style={{ color: '#888', fontSize: 10 }}>
-              {Math.floor(positionMillis / 60000)}:{(Math.floor((positionMillis % 60000) / 1000)).toString().padStart(2, '0')}
-            </Text>
-            <Text style={{ color: '#888', fontSize: 10 }}>
-              {Math.floor(durationMillis / 60000)}:{(Math.floor((durationMillis % 60000) / 1000)).toString().padStart(2, '0')}
-            </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <TouchableOpacity 
+              style={{ flex: 1 }} 
+              activeOpacity={0.7} 
+              onPress={() => { triggerLight(); setNowPlayingModalVisible(true); }}
+            >
+              <Text style={styles.nowPlayingTitle} numberOfLines={1}>
+                {effectiveSong ? effectiveSong.title : 'Ready to Play'}
+              </Text>
+              <Text style={styles.nowPlayingArtist} numberOfLines={1}>
+                {effectiveSong ? effectiveSong.artist || 'Unknown' : 'Select a playlist'}
+              </Text>
+            </TouchableOpacity>
+
+            {effectiveSong && (
+              <TouchableOpacity
+                onPress={() => {
+                  triggerLight();
+                  toggleFavoriteSong(effectiveSong);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={{ padding: 4, marginLeft: 6 }}
+              >
+                <MaterialCommunityIcons
+                  name={isSongFavorite(effectiveSong.id) ? "heart" : "heart-outline"}
+                  size={20}
+                  color={isSongFavorite(effectiveSong.id) ? "#FF2A6D" : "#666"}
+                />
+              </TouchableOpacity>
+            )}
           </View>
+          
+          {(() => {
+            const currentPos = slidingPos !== null ? slidingPos : positionMillis;
+            const effectiveDur = effectiveDurationMillis > 0
+              ? effectiveDurationMillis
+              : (effectiveSong?.durationMillis && effectiveSong.durationMillis > 0 ? effectiveSong.durationMillis : 180000);
+
+            return (
+              <>
+                <Slider
+                  style={{ width: '100%', height: 20 }}
+                  minimumValue={0}
+                  maximumValue={effectiveDur}
+                  value={Math.min(currentPos, effectiveDur)}
+                  minimumTrackTintColor={theme.accent}
+                  maximumTrackTintColor="#333"
+                  thumbTintColor={theme.accent}
+                  onSlidingStart={() => setSlidingPos(positionMillis)}
+                  onValueChange={(val) => setSlidingPos(val)}
+                  onSlidingComplete={async (value) => {
+                    setSlidingPos(value);
+                    await handleSeek(value / 1000);
+                    setTimeout(() => setSlidingPos(null), 300);
+                  }}
+                />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 4 }}>
+                  <Text style={{ color: '#888', fontSize: 10 }}>
+                    {Math.floor(currentPos / 60000)}:{(Math.floor((currentPos % 60000) / 1000)).toString().padStart(2, '0')}
+                  </Text>
+                  <Text style={{ color: '#888', fontSize: 10 }}>
+                    {Math.floor(effectiveDur / 60000)}:{(Math.floor((effectiveDur % 60000) / 1000)).toString().padStart(2, '0')}
+                  </Text>
+                </View>
+              </>
+            );
+          })()}
           
           <View style={styles.playbackButtons}>
             <TouchableOpacity onPress={toggleShuffle} style={styles.controlIcon}>
-              <MaterialCommunityIcons name="shuffle-variant" size={24} color={isShuffle ? '#00D2FF' : '#666'} />
+              <MaterialCommunityIcons name="shuffle-variant" size={24} color={isShuffle ? theme.accent : '#666'} />
             </TouchableOpacity>
             
             <TouchableOpacity onPress={handlePrevious} style={styles.controlIcon}>
@@ -380,9 +971,14 @@ export default function MediaPlayerWidget({ width }: { width: number }) {
             
             <TouchableOpacity 
               onPress={handlePlayPause} 
-              style={[styles.playPauseBtn, { backgroundColor: isCurrentlyPlaying ? '#FF9500' : '#00D2FF' }]}
+              disabled={isRestreaming}
+              style={[styles.playPauseBtn, { backgroundColor: isCurrentlyPlaying ? '#FF9500' : theme.accent }]}
             >
-              <MaterialCommunityIcons name={isCurrentlyPlaying ? "pause" : "play"} size={36} color="#000" />
+              {isRestreaming ? (
+                <ActivityIndicator size="small" color="#000" />
+              ) : (
+                <MaterialCommunityIcons name={isCurrentlyPlaying ? "pause" : "play"} size={36} color="#000" />
+              )}
             </TouchableOpacity>
             
             <TouchableOpacity onPress={handleNext} style={styles.controlIcon}>
@@ -391,6 +987,24 @@ export default function MediaPlayerWidget({ width }: { width: number }) {
           </View>
         </View>
       </View>
+
+      {/* Interactive Global Music Search Bar */}
+      <TouchableOpacity 
+        style={[styles.searchBarPill, { backgroundColor: theme.subCardBg, borderColor: theme.cardBorder }]}
+        activeOpacity={0.8}
+        onPress={() => { triggerLight(); setSearchModalVisible(true); }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+          <MaterialCommunityIcons name="magnify" size={17} color={theme.accent} />
+          <Text style={styles.searchBarPlaceholder} numberOfLines={1}>
+            Song, Artist oder YouTube-Link suchen...
+          </Text>
+        </View>
+        <View style={[styles.searchPillBadge, { backgroundColor: theme.accentSoftBg, borderColor: theme.accentBorder }]}>
+          <MaterialCommunityIcons name="youtube" size={12} color="#FF0000" />
+          <Text style={[styles.searchPillBadgeText, { color: theme.accent }]}>ONLINE</Text>
+        </View>
+      </TouchableOpacity>
 
       {/* Background Download Progress Banner */}
       {downloadProgress && downloadProgress.isDownloading && (
@@ -401,7 +1015,7 @@ export default function MediaPlayerWidget({ width }: { width: number }) {
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
             <Text style={{ color: '#FF4444', fontSize: 11, fontWeight: 'bold' }} numberOfLines={1}>
-              ⬇️ Lade YouTube Playlist: {downloadProgress.playlistName}
+              ⬇️ Lade Playlist: {downloadProgress.playlistName}
             </Text>
             <Text style={{ color: '#FFF', fontSize: 11, fontWeight: 'bold' }}>
               {downloadProgress.progressPercent}%
@@ -417,18 +1031,66 @@ export default function MediaPlayerWidget({ width }: { width: number }) {
       )}
 
       {/* Playlists Row */}
-      <View style={styles.playlistsSection}>
+      <View style={[styles.playlistsSection, { borderTopColor: theme.subtleBorder }]}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <Text style={styles.playlistsHeader}>Your Playlists</Text>
-          <TouchableOpacity 
-            onPress={() => setYtModalVisible(true)} 
-            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FF000020', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, borderWidth: 1, borderColor: '#FF000050' }}
-          >
-            <MaterialCommunityIcons name="youtube" size={14} color="#FF0000" style={{ marginRight: 4 }} />
-            <Text style={{ color: '#FF4444', fontSize: 10, fontWeight: 'bold' }}>Import</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <TouchableOpacity 
+              onPress={() => { triggerLight(); setAllPlaylistsModalVisible(true); }} 
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#00D2FF18', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, borderWidth: 1, borderColor: '#00D2FF45' }}
+            >
+              <MaterialCommunityIcons name="playlist-music" size={14} color={theme.accent} style={{ marginRight: 4 }} />
+              <Text style={{ color: theme.accent, fontSize: 10, fontWeight: 'bold' }}>Alle ({playlists.length})</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              onPress={() => setYtModalVisible(true)} 
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FF000020', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, borderWidth: 1, borderColor: '#FF000050' }}
+            >
+              <MaterialCommunityIcons name="youtube" size={14} color="#FF0000" style={{ marginRight: 4 }} />
+              <Text style={{ color: '#FF4444', fontSize: 10, fontWeight: 'bold' }}>Import</Text>
+            </TouchableOpacity>
+          </View>
         </View>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' }}>
+          {/* Dedicated Favoriten Playlist Tile */}
+          <TouchableOpacity 
+            style={styles.playlistIconContainer}
+            onPress={() => { triggerLight(); setFavModalVisible(true); }}
+          >
+            <View style={[styles.playlistCover, { backgroundColor: '#281118', borderWidth: 1.5, borderColor: '#FF2A6D70' }]}>
+              <MaterialCommunityIcons name="heart" size={26} color="#FF2A6D" />
+            </View>
+            <Text style={[styles.playlistIconName, { color: '#FF2A6D', fontWeight: 'bold' }]} numberOfLines={1}>
+              Favoriten {favoriteSongs?.length > 0 ? `(${favoriteSongs.length})` : ''}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Dedicated Heruntergeladen Playlist Tile */}
+          <TouchableOpacity 
+            style={styles.playlistIconContainer}
+            onPress={() => { triggerLight(); setDownloadedModalVisible(true); }}
+          >
+            <View style={[styles.playlistCover, { backgroundColor: theme.subCardBg, borderWidth: 1.5, borderColor: theme.accentBorder }]}>
+              <MaterialCommunityIcons name="download" size={26} color={theme.accent} />
+            </View>
+            <Text style={[styles.playlistIconName, { color: theme.accent, fontWeight: 'bold' }]} numberOfLines={1}>
+              Offline {downloadedSongs?.length > 0 ? `(${downloadedSongs.length})` : ''}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Dedicated All Playlists Tile */}
+          <TouchableOpacity 
+            style={styles.playlistIconContainer}
+            onPress={() => { triggerLight(); setAllPlaylistsModalVisible(true); }}
+          >
+            <View style={[styles.playlistCover, { backgroundColor: '#101B24', borderWidth: 1.5, borderColor: '#00D2FF50' }]}>
+              <MaterialCommunityIcons name="playlist-play" size={28} color={theme.accent} />
+            </View>
+            <Text style={[styles.playlistIconName, { color: theme.accent, fontWeight: 'bold' }]} numberOfLines={1}>
+              Alle Playlists
+            </Text>
+          </TouchableOpacity>
+
           {/* YouTube Downloader Playlist Tile */}
           <TouchableOpacity 
             style={styles.playlistIconContainer}
@@ -440,13 +1102,16 @@ export default function MediaPlayerWidget({ width }: { width: number }) {
             <Text style={[styles.playlistIconName, { color: '#FF5555', fontWeight: 'bold' }]} numberOfLines={1}>+ YouTube</Text>
           </TouchableOpacity>
 
-          {playlists.slice(0, 7).map(playlist => {
+          {displayedPlaylists.map(playlist => {
             const resolvedUri = playlist.coverUri ? getResolvedUri(playlist.coverUri) : null;
             return (
               <TouchableOpacity 
                 key={playlist.id} 
                 style={styles.playlistIconContainer}
                 onPress={() => openPlaylist(playlist)}
+                onLongPress={() => handlePlaylistLongPress(playlist)}
+                delayLongPress={350}
+                activeOpacity={0.7}
               >
                 <View style={[styles.playlistCover, !resolvedUri && { backgroundColor: '#333' }]}>
                   {resolvedUri ? (
@@ -466,6 +1131,15 @@ export default function MediaPlayerWidget({ width }: { width: number }) {
         visible={modalVisible} 
         playlist={selectedPlaylist} 
         onClose={() => setModalVisible(false)} 
+        onOpenSearch={(query) => {
+          setSearchPrefill(query || '');
+          setSearchModalVisible(true);
+        }}
+      />
+      <AllPlaylistsModal
+        visible={allPlaylistsModalVisible}
+        onClose={() => setAllPlaylistsModalVisible(false)}
+        onOpenPlaylist={(p) => openPlaylist(p)}
       />
       <MusicSettingsModal 
         visible={settingsModalVisible}
@@ -479,17 +1153,55 @@ export default function MediaPlayerWidget({ width }: { width: number }) {
         visible={ytModalVisible}
         onClose={() => setYtModalVisible(false)}
       />
+      <MusicRecommendationsModal
+        visible={recModalVisible}
+        onClose={() => setRecModalVisible(false)}
+        onPlaySong={handlePlayStreamSong}
+      />
+      <MusicSearchModal
+        visible={searchModalVisible}
+        onClose={() => { setSearchModalVisible(false); setSearchPrefill(''); }}
+        onPlaySong={handlePlayStreamSong}
+        initialQuery={searchPrefill}
+      />
+      <FavoritesModal
+        visible={favModalVisible}
+        onClose={() => setFavModalVisible(false)}
+        onPlaySong={handlePlayStreamSong}
+        onOpenSearch={(query) => {
+          setSearchPrefill(query || '');
+          setSearchModalVisible(true);
+        }}
+      />
+      <DownloadedSongsModal
+        visible={downloadedModalVisible}
+        onClose={() => setDownloadedModalVisible(false)}
+        onPlaySong={handlePlayStreamSong}
+        onOpenSearch={() => setSearchModalVisible(true)}
+      />
+      <NowPlayingModal
+        visible={nowPlayingModalVisible}
+        onClose={() => setNowPlayingModalVisible(false)}
+        positionMillis={positionMillis}
+        durationMillis={durationMillis}
+        onSeek={async (val) => handleSeek(val)}
+        onPlayPause={handlePlayPause}
+        onNext={handleNext}
+        onPrevious={handlePrevious}
+        isCurrentlyPlaying={isCurrentlyPlaying}
+        isRestreaming={isRestreaming}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#161C22',
     borderRadius: 20,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#2E2E32',
+    borderColor: 'rgba(0, 210, 255, 0.28)',
     padding: 16,
   },
   downloadProgressBanner: {
@@ -499,6 +1211,33 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 10,
     marginBottom: 16,
+  },
+  searchBarPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  searchBarPlaceholder: {
+    color: '#888',
+    fontSize: 12,
+  },
+  searchPillBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  searchPillBadgeText: {
+    fontSize: 9,
+    fontWeight: 'bold',
   },
   topSection: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
   vinylContainer: {

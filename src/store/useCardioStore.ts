@@ -4,19 +4,47 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type CardioActivityType = 'Running' | 'Cycling' | 'Boxing' | 'Swimming' | 'Paddle' | 'Football' | 'Walking';
 
+export interface RouteWaypoint {
+  latitude: number;
+  longitude: number;
+  timestamp: number;
+  altitude?: number;
+  speed?: number;
+  heartRate?: number;
+  cadence?: number;
+}
+
+export interface KmSplit {
+  splitIndex: number;
+  distanceMeters: number;
+  durationSeconds: number;
+  averagePaceMinKm: string;
+  averageSpeedKmh: number;
+  elevationDeltaMeters: number;
+  averageHeartRate: number;
+  averageCadence?: number;
+  averageWatts?: number;
+  isFastestSplit?: boolean;
+}
+
 export interface CardioSession {
   id: string;
   type: CardioActivityType;
   date: string; // ISO string
   durationSeconds: number;
+  movingDurationSeconds?: number;
   distanceMeters: number;
   caloriesBurned: number;
   averageHeartRate: number;
   maxHeartRate: number;
-  routeCoordinates?: { latitude: number; longitude: number; timestamp: number; altitude?: number; speed?: number; heartRate?: number }[];
+  routeCoordinates?: RouteWaypoint[];
   elevationGain?: number;
+  elevationLoss?: number;
   maxSpeed?: number;
-  splits?: { distance: number; time: number }[]; // seconds per split
+  averagePace?: string;
+  bestPace?: string;
+  averageWatts?: number;
+  splits?: KmSplit[];
   source: 'in-app' | 'health-connect';
   testType?: 'Cooper' | '1.5Mile' | 'Rockport';
   xpEarned?: number; // Added to track highest XP sessions
@@ -103,7 +131,15 @@ export const generateMockCardioSessions = () => {
     maxHeartRate: 178,
     maxSpeed: 38.5,
     elevationGain: 320,
+    elevationLoss: 310,
+    averageWatts: 235,
     routeCoordinates: cyclingRoute,
+    splits: [
+      { splitIndex: 1, distanceMeters: 5000, durationSeconds: 610, averagePaceMinKm: '2:02', averageSpeedKmh: 29.5, elevationDeltaMeters: 65, averageHeartRate: 138, averageWatts: 215 },
+      { splitIndex: 2, distanceMeters: 5000, durationSeconds: 690, averagePaceMinKm: '2:18', averageSpeedKmh: 26.1, elevationDeltaMeters: 140, averageHeartRate: 152, averageWatts: 275 },
+      { splitIndex: 3, distanceMeters: 5000, durationSeconds: 520, averagePaceMinKm: '1:44', averageSpeedKmh: 34.6, elevationDeltaMeters: -120, averageHeartRate: 132, averageWatts: 165, isFastestSplit: true },
+      { splitIndex: 4, distanceMeters: 3500, durationSeconds: 460, averagePaceMinKm: '2:11', averageSpeedKmh: 27.4, elevationDeltaMeters: 35, averageHeartRate: 148, averageWatts: 220 },
+    ],
     source: 'in-app'
   };
 
@@ -118,7 +154,15 @@ export const generateMockCardioSessions = () => {
     maxHeartRate: 185,
     maxSpeed: 14.2,
     elevationGain: 45,
+    elevationLoss: 40,
     routeCoordinates: runningRoute,
+    splits: [
+      { splitIndex: 1, distanceMeters: 1000, durationSeconds: 312, averagePaceMinKm: '5:12', averageSpeedKmh: 11.5, elevationDeltaMeters: 12, averageHeartRate: 146 },
+      { splitIndex: 2, distanceMeters: 1000, durationSeconds: 305, averagePaceMinKm: '5:05', averageSpeedKmh: 11.8, elevationDeltaMeters: 8, averageHeartRate: 152 },
+      { splitIndex: 3, distanceMeters: 1000, durationSeconds: 298, averagePaceMinKm: '4:58', averageSpeedKmh: 12.1, elevationDeltaMeters: -4, averageHeartRate: 158, isFastestSplit: true },
+      { splitIndex: 4, distanceMeters: 1000, durationSeconds: 318, averagePaceMinKm: '5:18', averageSpeedKmh: 11.3, elevationDeltaMeters: 18, averageHeartRate: 164 },
+      { splitIndex: 5, distanceMeters: 1000, durationSeconds: 310, averagePaceMinKm: '5:10', averageSpeedKmh: 11.6, elevationDeltaMeters: 11, averageHeartRate: 168 },
+    ],
     source: 'in-app'
   };
   

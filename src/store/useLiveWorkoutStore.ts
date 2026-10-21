@@ -8,6 +8,8 @@ interface LiveWorkoutState {
   workoutStartTime: number | null;
   liveExercises: Exercise[];
   setLogs: Record<string, { weight: string; reps: string; repsRight?: string; checked: boolean }>;
+  setTypes: Record<string, 'normal' | 'warmup' | 'drop' | 'failure'>;
+  exerciseNotes: Record<string, string>;
   unilateralExercises: string[];
   restEndTime: number | null;
   
@@ -16,6 +18,8 @@ interface LiveWorkoutState {
   setWorkoutStartTime: (time: number | null) => void;
   setLiveExercises: (exercises: Exercise[] | ((prev: Exercise[]) => Exercise[])) => void;
   setSetLogs: (logs: Record<string, { weight: string; reps: string; repsRight?: string; checked: boolean }> | ((prev: any) => any)) => void;
+  setSetTypes: (types: Record<string, 'normal' | 'warmup' | 'drop' | 'failure'> | ((prev: any) => any)) => void;
+  setExerciseNotes: (notes: Record<string, string> | ((prev: any) => any)) => void;
   setUnilateralExercises: (exercises: string[]) => void;
   setRestEndTime: (time: number | null | ((prev: number | null) => number | null)) => void;
 }
@@ -27,6 +31,8 @@ export const useLiveWorkoutStore = create<LiveWorkoutState>()(
       workoutStartTime: null,
       liveExercises: [],
       setLogs: {},
+      setTypes: {},
+      exerciseNotes: {},
       unilateralExercises: [],
       restEndTime: null,
 
@@ -35,6 +41,12 @@ export const useLiveWorkoutStore = create<LiveWorkoutState>()(
       setLiveExercises: (exercises) => set((state) => ({ liveExercises: typeof exercises === 'function' ? exercises(state.liveExercises) : exercises })),
       setSetLogs: (logs) => set((state) => ({ 
         setLogs: typeof logs === 'function' ? logs(state.setLogs) : logs 
+      })),
+      setSetTypes: (types) => set((state) => ({
+        setTypes: typeof types === 'function' ? types(state.setTypes) : types
+      })),
+      setExerciseNotes: (notes) => set((state) => ({
+        exerciseNotes: typeof notes === 'function' ? notes(state.exerciseNotes) : notes
       })),
       setUnilateralExercises: (exercises) => set({ unilateralExercises: exercises }),
       setRestEndTime: (time) => set((state) => ({ restEndTime: typeof time === 'function' ? time(state.restEndTime) : time })),

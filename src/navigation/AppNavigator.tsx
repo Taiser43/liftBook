@@ -16,12 +16,13 @@ import CoreDetailScreen from '../screens/CoreDetailScreen';
 import StretchingLibraryScreen from '../screens/StretchingLibraryScreen';
 import StretchingDetailScreen from '../screens/StretchingDetailScreen';
 import CustomAlert from '../components/CustomAlert';
+import { getAppTheme } from '../utils/theme';
 import CardioTestsScreen from '../screens/CardioTestsScreen';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GlobalNotepad } from '../components/GlobalNotepad';
 import { GlobalActivityBar } from '../components/GlobalActivityBar';
-import { View, StyleSheet, Platform, Dimensions, TouchableOpacity, Text, Alert, AppState } from 'react-native';
+import { View, StyleSheet, Platform, Dimensions, TouchableOpacity, Text, Alert, AppState, Linking } from 'react-native';
 import { useAppStore } from '../store/store';
 import { useCardioStore } from '../store/useCardioStore';
 import { useEffect } from 'react';
@@ -35,31 +36,35 @@ import SupplementLibraryScreen from '../screens/SupplementLibraryScreen';
 import SupplementPlansScreen from '../screens/SupplementPlansScreen';
 import StatsScreen from '../screens/StatsScreen';
 import LevelUpModal from '../components/LevelUpModal';
+import { IronTacticsShell } from '../screens/ironTactics/IronTacticsShell';
 
 
 const Stack = createNativeStackNavigator();
 const Tab = createMaterialTopTabNavigator();
 
 function MainTabs() {
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
+
   return (
     <Tab.Navigator
         tabBarPosition="bottom"
         screenOptions={({ route }) => ({
           swipeEnabled: true,
           animationEnabled: true,
-          tabBarActiveTintColor: '#00D2FF',
+          tabBarActiveTintColor: theme.accent,
           tabBarInactiveTintColor: '#777777',
           tabBarShowIcon: true,
           tabBarIndicatorStyle: {
-            backgroundColor: '#00D2FF',
+            backgroundColor: theme.accent,
             top: 0,
             height: 3,
             borderRadius: 2
           },
           tabBarStyle: {
-            backgroundColor: '#181818',
+            backgroundColor: theme.subCardBg || '#181818',
             borderTopWidth: 1,
-            borderTopColor: '#282828',
+            borderTopColor: theme.subtleBorder || '#282828',
             elevation: 8,
             shadowColor: '#000',
             shadowOpacity: 0.3,
@@ -183,11 +188,54 @@ export default function AppNavigator() {
     });
   }, []);
 
+  // Handle Deep Linking from Android Home-Screen Widgets
+  useEffect(() => {
+    let isMounted = true;
+    const handleDeepLink = (url: string | null) => {
+      if (!url || !isMounted) return;
+      if (url.includes('scan')) {
+        useAppStore.getState().setOpenBarcodeScannerOnMount(true);
+        if (navigationRef.isReady()) {
+          (navigationRef as any).navigate('MainTabs', { screen: 'Nutrition' });
+        }
+      } else if (url.includes('nutrition')) {
+        if (navigationRef.isReady()) {
+          (navigationRef as any).navigate('MainTabs', { screen: 'Nutrition' });
+        }
+      }
+    };
+
+    Linking.getInitialURL().then(handleDeepLink);
+    const sub = Linking.addEventListener('url', (event: { url: string }) => handleDeepLink(event.url));
+    return () => {
+      isMounted = false;
+      sub.remove();
+    };
+  }, []);
+
+  const linking = {
+    prefixes: ['ironlog://', 'https://ironlog.app'],
+    config: {
+      screens: {
+        MainTabs: {
+          screens: {
+            Home: 'home',
+            Training: 'training',
+            Nutrition: 'nutrition',
+            Cardio: 'cardio',
+            Supplements: 'supplements',
+            Stats: 'stats',
+          },
+        },
+      },
+    },
+  };
+
   return (
     <View style={{ flex: 1 }}>
       <CustomAlert />
       <LevelUpModal />
-      <NavigationContainer theme={DarkTheme} ref={navigationRef}>
+      <NavigationContainer theme={DarkTheme} ref={navigationRef} linking={linking}>
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           <Stack.Screen name="MainTabs" component={MainTabs} />
           <Stack.Screen name="CardioHistory" component={CardioHistoryScreen} />
@@ -200,6 +248,7 @@ export default function AppNavigator() {
           <Stack.Screen name="StretchingDetail" component={StretchingDetailScreen} />
           <Stack.Screen name="SupplementLibrary" component={SupplementLibraryScreen} />
           <Stack.Screen name="SupplementPlans" component={SupplementPlansScreen} />
+          <Stack.Screen name="IronTactics" component={IronTacticsShell} options={{ animation: 'slide_from_bottom' }} />
         </Stack.Navigator>
       </NavigationContainer>
 

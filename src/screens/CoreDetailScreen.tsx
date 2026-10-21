@@ -3,8 +3,14 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Ima
 import { WebView } from 'react-native-webview';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useCoreStore } from '../store/useCoreStore';
+import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
+import { useBottomSpacing } from '../hooks/useBottomSpacing';
 
 export default function CoreDetailScreen({ route, navigation }: any) {
+  const bottomSpacing = useBottomSpacing();
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const { id } = route.params;
   const exercises = useCoreStore(state => state.exercises);
   const favoriteIds = useCoreStore(state => state.favoriteIds);
@@ -65,7 +71,7 @@ export default function CoreDetailScreen({ route, navigation }: any) {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomSpacing }]}>
         {videoId ? (
           <View>
             <View style={styles.videoContainer}>
@@ -85,8 +91,8 @@ export default function CoreDetailScreen({ route, navigation }: any) {
                 Linking.openURL(`https://www.youtube.com/watch?v=${videoId}`);
               }}
             >
-              <MaterialCommunityIcons name="open-in-new" size={20} color="#00D2FF" style={{ marginRight: 8 }} />
-              <Text style={{ color: '#00D2FF', fontWeight: 'bold' }}>In YouTube App öffnen</Text>
+              <MaterialCommunityIcons name="open-in-new" size={20} color={theme.accent} style={{ marginRight: 8 }} />
+              <Text style={{ color: theme.accent, fontWeight: 'bold' }}>In YouTube App öffnen</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -128,7 +134,7 @@ export default function CoreDetailScreen({ route, navigation }: any) {
                   navigation.navigate('CoreLibrary');
                 }}
               >
-                <Text style={styles.tagText}>{c}</Text>
+                <Text style={[styles.tagText, { color: theme.accent }]}>{c}</Text>
               </TouchableOpacity>
             ))}
           </View>

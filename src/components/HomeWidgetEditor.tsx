@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppStore, WidgetContainer, WidgetType } from '../store/store';
+import { THEME_LIST, getAppTheme } from '../utils/theme';
 
 interface Props {
   visible: boolean;
@@ -17,15 +18,17 @@ const WIDGET_NAMES: Record<WidgetType, string> = {
   'activity': 'Activity Stats',
   'music': 'Music Player',
   'supplements': 'Supplement Tracker',
-  'checkin': 'Wöchentlicher Check-In'
+  'checkin': 'Wöchentlicher Check-In',
+  'arena': '⚔️ Iron Tactics Arena'
 };
 
 const ALL_WIDGETS = Object.keys(WIDGET_NAMES) as WidgetType[];
 
 export default function HomeWidgetEditor({ visible, onClose }: Props) {
-  const { homeLayout, updateHomeLayout, disabledWidgets, setDisabledWidgets } = useAppStore();
+  const { homeLayout, updateHomeLayout, disabledWidgets, setDisabledWidgets, accentThemeId, setAccentThemeId } = useAppStore();
   const [layout, setLayout] = useState<WidgetContainer[]>(homeLayout);
   const [disabled, setDisabled] = useState<WidgetType[]>(disabledWidgets || []);
+  const currentTheme = getAppTheme(accentThemeId);
 
   React.useEffect(() => {
     if (visible) {
@@ -125,17 +128,55 @@ export default function HomeWidgetEditor({ visible, onClose }: Props) {
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.title}>Edit Home Layout</Text>
+          <Text style={styles.title}>Edit Home & Theme</Text>
           <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
             <MaterialCommunityIcons name="close" size={24} color="#FFF" />
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.helperText}>
-          Move items up or down. Group items together to create swipeable horizontal stacks!
-        </Text>
+        <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 40, paddingTop: 14 }}>
+          {/* ACCENT COLOR & WIDGET SHIMMER SELECTOR */}
+          <View style={[styles.containerCard, { backgroundColor: currentTheme.cardBg, borderColor: currentTheme.cardBorder, padding: 14 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <MaterialCommunityIcons name="palette-outline" size={18} color={currentTheme.accent} />
+              <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '800' }}>App Akzentfarbe & Widget-Schimmer</Text>
+            </View>
+            <Text style={{ color: '#9CA3AF', fontSize: 12, marginBottom: 12 }}>
+              Bestimmt den Hintergrund-Schimmer aller Widgets (Home, Ernährung & Training) sowie die Akzentfarbe:
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {THEME_LIST.map(t => {
+                const isSel = t.id === currentTheme.id;
+                return (
+                  <TouchableOpacity
+                    key={t.id}
+                    onPress={() => setAccentThemeId(t.id)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 7,
+                      backgroundColor: t.cardBg,
+                      borderWidth: isSel ? 2 : 1,
+                      borderColor: isSel ? t.accent : t.subtleBorder,
+                      paddingHorizontal: 11,
+                      paddingVertical: 8,
+                      borderRadius: 12,
+                    }}
+                  >
+                    <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: t.accent }} />
+                    <Text style={{ color: isSel ? t.accent : '#E5E7EB', fontSize: 12, fontWeight: '800' }}>
+                      {t.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
 
-        <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 40 }}>
+          <Text style={[styles.helperText, { marginTop: 4, marginBottom: 12 }]}>
+            Move items up or down. Group items together to create swipeable horizontal stacks!
+          </Text>
+
           {layout.map((container, cIndex) => (
             <View key={container.id} style={styles.containerCard}>
               <View style={styles.cardHeader}>

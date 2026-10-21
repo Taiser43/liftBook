@@ -7,6 +7,9 @@ import { AutoChessBoard } from './AutoChessBoard';
 import { AutoChessShop } from './AutoChessShop';
 import { AutoChessCombatView } from './AutoChessCombatView';
 import { TrophyRoadModal } from './TrophyRoadModal';
+import { IronTacticsTopMusicBar } from '../ironTactics/IronTacticsTopMusicBar';
+import { usePlaybackState, State as PlaybackStateEnum } from 'react-native-track-player';
+import { triggerLight } from '../../utils/haptics';
 import { useAutoChessStore } from '../../store/useAutoChessStore';
 
 interface Props {
@@ -23,10 +26,14 @@ export const RestAutoChessModal: React.FC<Props> = ({
   onAdd30s
 }) => {
   const insets = useSafeAreaInsets();
+  const isBoardDragging = useAutoChessStore(state => state.isBoardDragging);
   const topInset = Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 44);
 
   const [activeTab, setActiveTab] = useState<'team' | 'combat'>('team');
   const [trophyRoadVisible, setTrophyRoadVisible] = useState(false);
+  const [musicBarVisible, setMusicBarVisible] = useState(false);
+  const playbackState = usePlaybackState();
+  const isMusicPlaying = playbackState.state === PlaybackStateEnum.Playing;
   const trophies = useAutoChessStore(state => state.trophies);
   const activeWaveBonusStacks = useAutoChessStore(state => state.activeWaveBonusStacks);
   const pendingWaveBonusStacks = useAutoChessStore(state => state.pendingWaveBonusStacks);
@@ -89,6 +96,28 @@ export const RestAutoChessModal: React.FC<Props> = ({
                 <Text style={styles.bossPillText}>👑 BOSS</Text>
               </View>
             )}
+
+            {/* Music Button */}
+            <TouchableOpacity
+              style={[
+                styles.musicBtn,
+                musicBarVisible && styles.musicBtnActive,
+                isMusicPlaying && styles.musicBtnPlaying,
+              ]}
+              onPress={() => {
+                triggerLight();
+                setMusicBarVisible(v => !v);
+              }}
+              activeOpacity={0.75}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+            >
+              <MaterialCommunityIcons
+                name={isMusicPlaying ? 'music' : 'music-note'}
+                size={14}
+                color={musicBarVisible || isMusicPlaying ? '#00D2FF' : '#8E8E93'}
+              />
+              {isMusicPlaying && <View style={styles.musicPlayingDot} />}
+            </TouchableOpacity>
           </View>
 
           {/* Rest HUD Actions */}
@@ -102,6 +131,12 @@ export const RestAutoChessModal: React.FC<Props> = ({
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Top Dropdown Music Bar */}
+        <IronTacticsTopMusicBar
+          visible={musicBarVisible}
+          onClose={() => setMusicBarVisible(false)}
+        />
 
         {/* Synergy Bar */}
         <AutoChessSynergyBar />
@@ -141,7 +176,11 @@ export const RestAutoChessModal: React.FC<Props> = ({
 
         {/* Tab Content */}
         {activeTab === 'team' ? (
-          <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            style={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            scrollEnabled={!isBoardDragging}
+          >
             <AutoChessBoard />
             <AutoChessShop />
           </ScrollView>
@@ -261,6 +300,33 @@ const styles = StyleSheet.create({
     color: '#C084FC',
     fontSize: 9.5,
     fontWeight: '900',
+  },
+  musicBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#1E1E28',
+    borderWidth: 1,
+    borderColor: '#363644',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  musicBtnActive: {
+    borderColor: '#00D2FF',
+    backgroundColor: 'rgba(0, 210, 255, 0.15)',
+  },
+  musicBtnPlaying: {
+    borderColor: 'rgba(0, 210, 255, 0.5)',
+  },
+  musicPlayingDot: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#00D2FF',
   },
   hudActions: {
     flexDirection: 'row',

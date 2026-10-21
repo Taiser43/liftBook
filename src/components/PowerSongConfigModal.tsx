@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, TextInput } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMusicStore, Song } from '../store/useMusicStore';
+import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 
 interface Props {
   visible: boolean;
@@ -11,6 +13,8 @@ interface Props {
 }
 
 export default function PowerSongConfigModal({ visible, song, playlistId, onClose }: Props) {
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const { setPowerSong } = useMusicStore();
   const [startSecs, setStartSecs] = useState('0');
 
@@ -29,7 +33,7 @@ export default function PowerSongConfigModal({ visible, song, playlistId, onClos
   return (
     <Modal visible={visible} animationType="fade" transparent={true}>
       <View style={styles.container}>
-        <View style={styles.card}>
+        <View style={[styles.card, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder, borderWidth: 1 }]}>
           <Text style={styles.title}>Configure Power Song</Text>
           <Text style={styles.sub}>{song.title}</Text>
           

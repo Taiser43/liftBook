@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Buffer } from 'buffer';
-import { View, Text, StyleSheet, TouchableOpacity, AppState, AppStateStatus, Modal, Animated } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, AppState, AppStateStatus, Modal, Animated, Vibration, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
-import MapView, { Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Polyline, Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import haversine from 'haversine';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppStore } from '../store/store';
-import { useCardioStore, CardioActivityType, CardioSession } from '../store/useCardioStore';
+import { useCardioStore, CardioActivityType, CardioSession, KmSplit, RouteWaypoint } from '../store/useCardioStore';
 import { getHeartRateZoneColor } from '../utils/heartRate';
 import { getCardioLevelData } from '../utils/gamification';
 import { useHeartRateMonitor } from '../hooks/useHeartRateMonitor';
+import { useIronTacticsMetaStore } from '../store/useIronTacticsMetaStore';
+import { getAppTheme } from '../utils/theme';
 
 import {
   startBgLocationTracking,
@@ -59,7 +61,8 @@ export default function CardioTrackingScreen({ navigation }: Props) {
   const setGlobalCardioSession = useAppStore(state => state.setGlobalCardioSession);
   const addXP = useAppStore(state => state.addXP);
   const cardioXP = useCardioStore(state => state.cardioXP) || {};
-
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
 
   // ── Session state ────────────────────────────────────────────────────────────
   const [isTracking, setIsTracking] = useState(false);
@@ -67,6 +70,16 @@ export default function CardioTrackingScreen({ navigation }: Props) {
   const [distance, setDistance] = useState(0);       // metres
   const [duration, setDuration] = useState(0);       // seconds
   const [calories, setCalories] = useState(0);
+  const [elevationGain, setElevationGain] = useState(0);
+  const [isAutoPaused, setIsAutoPaused] = useState(false);
+  const [splits, setSplits] = useState<KmSplit[]>([]);
+  const [initialLocation, setInitialLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+
+  const mapRef = useRef<MapView | null>(null);
+  const lastSplitDistRef = useRef(0);
+  const lastSplitTimeRef = useRef(0);
+  const lastSplitElevRef = useRef(0);
+  const lastAltitudeRef = useRef<number | null>(null);
 
   const [celebrationModalVisible, setCelebrationModalVisible] = useState(false);
   const [lastCompletedSession, setLastCompletedSession] = useState<CardioSession | null>(null);
@@ -108,6 +121,86 @@ export default function CardioTrackingScreen({ navigation }: Props) {
   // App state watcher – detect foreground/background transitions
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
+  // ── Initial Location Fetch when Modal Opens ───────────────────────────────
+  // ── Auto-Center & Initial Location ───────────────────────────────────────────
+  useEffect(() => {
+    let preSub: Location.LocationSubscription | null = null;
+    if (modalVisible && !isTracking) {
+      (async () => {
+        try {
+          const { status } = await Location.getForegroundPermissionsAsync();
+          if (status === 'granted') {
+            const last = await Location.getLastKnownPositionAsync({});
+            if (last) {
+              setInitialLocation({
+                latitude: last.coords.latitude,
+                longitude: last.coords.longitude,
+              });
+              mapRef.current?.animateToRegion({
+                latitude: last.coords.latitude,
+                longitude: last.coords.longitude,
+                latitudeDelta: 0.005,
+                longitudeDelta: 0.005,
+              }, 400);
+            }
+            // Keep centered before starting
+            preSub = await Location.watchPositionAsync(
+              { accuracy: Location.Accuracy.Balanced, timeInterval: 2500, distanceInterval: 4 },
+              loc => {
+                setInitialLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+                mapRef.current?.animateToRegion({
+                  latitude: loc.coords.latitude,
+                  longitude: loc.coords.longitude,
+                  latitudeDelta: 0.005,
+                  longitudeDelta: 0.005,
+                }, 400);
+              }
+            );
+          }
+        } catch {
+          // ignore
+        }
+      })();
+    }
+    return () => {
+      if (preSub) preSub.remove();
+    };
+  }, [modalVisible, isTracking]);
+
+  const recenterMap = async () => {
+    try {
+      if (coordinates.length > 0) {
+        const latest = coordinates[coordinates.length - 1];
+        mapRef.current?.animateToRegion({
+          latitude: latest.latitude,
+          longitude: latest.longitude,
+          latitudeDelta: 0.005,
+          longitudeDelta: 0.005,
+        }, 400);
+      } else if (initialLocation) {
+        mapRef.current?.animateToRegion({
+          latitude: initialLocation.latitude,
+          longitude: initialLocation.longitude,
+          latitudeDelta: 0.005,
+          longitudeDelta: 0.005,
+        }, 400);
+      } else {
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (pos) {
+          setInitialLocation({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+          mapRef.current?.animateToRegion({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            latitudeDelta: 0.005,
+            longitudeDelta: 0.005,
+          }, 400);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   // ── Haversine helper ─────────────────────────────────────────────────────────
   const calcDistanceBetween = (a: BgCoord, b: BgCoord): number =>
     haversine(
@@ -118,6 +211,7 @@ export default function CardioTrackingScreen({ navigation }: Props) {
 
   // ── Foreground location fallback (when app is open) ─────────────────────────
   const fgSubRef = useRef<Location.LocationSubscription | null>(null);
+  const autoPauseThreshold = activityType === 'Cycling' ? 0.9 : 0.6; // m/s (~3.2 km/h bike, ~2.2 km/h run)
 
   // ── App foreground: sync BG coords ──────────────────────────────────────────
   useEffect(() => {
@@ -127,26 +221,77 @@ export default function CardioTrackingScreen({ navigation }: Props) {
         nextState === 'active' &&
         isTracking
       ) {
-        // App came back to foreground – pull background coords
+        // App came back to foreground – pull background coords accumulated during sleep mode
         await syncBgCoords();
       }
       appStateRef.current = nextState;
     });
     return () => sub.remove();
-  }, [isTracking]);
+  }, [isTracking, duration, elevationGain]);
 
   const syncBgCoords = async () => {
     const bgCoords = await readBgCoords();
     if (bgCoords.length === 0) return;
     setCoordinates(prev => {
       const merged = [...prev];
-      let extra = 0;
+      let extraDist = 0;
+      let extraElev = 0;
+
       for (const c of bgCoords) {
         const last = merged[merged.length - 1];
-        if (last) extra += calcDistanceBetween(last, c);
+        if (last) {
+          const d = calcDistanceBetween(last, c);
+          if (d < 350) extraDist += d; // ignore crazy GPS teleport jumps
+        }
+        if (c.altitude && lastAltitudeRef.current !== null) {
+          const dAlt = c.altitude - lastAltitudeRef.current;
+          if (dAlt > 1.2) extraElev += dAlt;
+        }
+        if (c.altitude) lastAltitudeRef.current = c.altitude;
         merged.push(c);
       }
-      setDistance(d => d + extra);
+
+      if (extraElev > 0) {
+        setElevationGain(prevElev => prevElev + extraElev);
+      }
+
+      setDistance(d => {
+        const updated = d + extraDist;
+        // Check for km splits completed while phone was in sleep mode
+        while (updated - lastSplitDistRef.current >= 1000) {
+          const sDist = 1000;
+          const sDur = Math.max(duration - lastSplitTimeRef.current, 60);
+          const sSpeed = sDur > 0 ? (sDist / 1000) / (sDur / 3600) : 0;
+          const sPace = sSpeed > 0
+            ? `${Math.floor(60 / sSpeed)}:${String(Math.round(((60 / sSpeed) % 1) * 60)).padStart(2, '0')}`
+            : '--:--';
+          const splitItem: KmSplit = {
+            splitIndex: Math.floor((lastSplitDistRef.current + 1000) / 1000),
+            distanceMeters: sDist,
+            durationSeconds: sDur,
+            averagePaceMinKm: sPace,
+            averageSpeedKmh: Math.round(sSpeed * 10) / 10,
+            elevationDeltaMeters: Math.round(elevationGain - lastSplitElevRef.current),
+            averageHeartRate: currentHRRef.current || 140,
+          };
+          setSplits(sp => [...sp, splitItem]);
+          lastSplitDistRef.current += 1000;
+          lastSplitTimeRef.current = duration;
+          lastSplitElevRef.current = elevationGain;
+        }
+        return updated;
+      });
+
+      if (merged.length > 0) {
+        const latest = merged[merged.length - 1];
+        mapRef.current?.animateToRegion({
+          latitude: latest.latitude,
+          longitude: latest.longitude,
+          latitudeDelta: 0.005,
+          longitudeDelta: 0.005,
+        }, 400);
+      }
+
       return merged;
     });
     await clearBgCoords();
@@ -162,11 +307,18 @@ export default function CardioTrackingScreen({ navigation }: Props) {
     }
 
     setIsTracking(true);
+    setIsAutoPaused(false);
     if (duration === 0) {
       setCoordinates([]);
       setDistance(0);
       setDuration(0);
       setCalories(0);
+      setElevationGain(0);
+      setSplits([]);
+      lastSplitDistRef.current = 0;
+      lastSplitTimeRef.current = 0;
+      lastSplitElevRef.current = 0;
+      lastAltitudeRef.current = null;
       pausedDurationRef.current = 0;
     }
     startTimestampRef.current = Date.now();
@@ -179,17 +331,80 @@ export default function CardioTrackingScreen({ navigation }: Props) {
         distanceInterval: 3,
       },
       loc => {
+        // Always center map on current location
+        mapRef.current?.animateToRegion({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+          latitudeDelta: 0.005,
+          longitudeDelta: 0.005,
+        }, 400);
+
+        const speed = loc.coords.speed ?? 0;
+
+        // Auto-pause detection (Traffic lights / rest stop)
+        if (speed < autoPauseThreshold && !isAutoPaused) {
+          setIsAutoPaused(true);
+        } else if (speed >= autoPauseThreshold && isAutoPaused) {
+          setIsAutoPaused(false);
+          Vibration.vibrate(80); // Subtle haptic tick when moving resumes
+        }
+
+        const alt = loc.coords.altitude ?? 0;
+        if (alt && lastAltitudeRef.current !== null) {
+          const dAlt = alt - lastAltitudeRef.current;
+          if (dAlt > 1.2) {
+            setElevationGain(e => e + dAlt);
+          }
+        }
+        if (alt) lastAltitudeRef.current = alt;
+
         const newCoord: BgCoord = {
           latitude: loc.coords.latitude,
           longitude: loc.coords.longitude,
           timestamp: loc.timestamp,
-          speed: loc.coords.speed,
+          altitude: alt,
+          speed: speed,
+          accuracy: loc.coords.accuracy ?? undefined,
           heartRate: currentHRRef.current,
         };
+
         setCoordinates(prev => {
+          let newDist = 0;
           if (prev.length > 0) {
             const dist = calcDistanceBetween(prev[prev.length - 1], newCoord);
-            setDistance(d => d + dist);
+            if (dist < 250) { // filter GPS jitter anomalies
+              newDist = dist;
+            }
+          }
+          if (newDist > 0) {
+            setDistance(d => {
+              const updatedDist = d + newDist;
+              // Check 1 km split trigger
+              if (updatedDist - lastSplitDistRef.current >= 1000) {
+                const sDist = 1000;
+                const sDur = duration - lastSplitTimeRef.current;
+                const sSpeed = sDur > 0 ? (sDist / 1000) / (sDur / 3600) : 0;
+                const sPace = sSpeed > 0
+                  ? `${Math.floor(60 / sSpeed)}:${String(Math.round(((60 / sSpeed) % 1) * 60)).padStart(2, '0')}`
+                  : '--:--';
+                const splitItem: KmSplit = {
+                  splitIndex: Math.floor(updatedDist / 1000),
+                  distanceMeters: sDist,
+                  durationSeconds: sDur,
+                  averagePaceMinKm: sPace,
+                  averageSpeedKmh: Math.round(sSpeed * 10) / 10,
+                  elevationDeltaMeters: Math.round(elevationGain - lastSplitElevRef.current),
+                  averageHeartRate: currentHRRef.current || 140,
+                };
+                setSplits(sp => [...sp, splitItem]);
+                lastSplitDistRef.current = Math.floor(updatedDist / 1000) * 1000;
+                lastSplitTimeRef.current = duration;
+                lastSplitElevRef.current = elevationGain;
+                // Subtle haptic vibration for KM split (no voice audio!)
+                Vibration.vibrate([0, 150, 80, 150]);
+              }
+              return updatedDist;
+            });
           }
           return [...prev, newCoord];
         });
@@ -197,62 +412,61 @@ export default function CardioTrackingScreen({ navigation }: Props) {
     );
     fgSubRef.current = sub;
 
-    // Also start background task so GPS continues when screen goes off
+    // Also start background task so GPS continues seamlessly when screen is locked in pocket/bike mount
     await startBgLocationTracking();
-    
+
     lastTickTimeRef.current = Date.now();
 
-    // Seconds timer – also syncs global state for mini-player
+    // Seconds timer – syncs global state for mini-player
     timerRef.current = setInterval(() => {
       const now = Date.now();
       const deltaSeconds = (now - lastTickTimeRef.current) / 1000;
       lastTickTimeRef.current = now;
-      
-      const newDur = Math.floor((now - startTimestampRef.current!) / 1000) + pausedDurationRef.current;
-      setDuration(newDur);
-      
-      setDistance(d => {
-        const spd = newDur > 0 ? (d / 1000) / (newDur / 3600) : 0;
-        setGlobalCardioSession(true, newDur, d, spd);
-        return d;
+
+      setDuration(prevDur => {
+        const newDur = prevDur + 1;
+        setDistance(d => {
+          const spd = newDur > 0 ? (d / 1000) / (newDur / 3600) : 0;
+          setGlobalCardioSession(true, newDur, d, spd);
+          return d;
+        });
+        return newDur;
       });
-      
-      // Calculate calories based on time passed since last tick, so background suspensions don't lose calories
+
+      // Calculate calories based on time passed since last tick
       const hr = currentHRRef.current;
-      const currentCalRatePerSecond = (hr > 80 ? hr * 0.06 : 10) / 60; // Slightly increased multiplier for realistic values (e.g. ~140bpm = ~8.4 kcal/min)
+      const currentCalRatePerSecond = (hr > 80 ? hr * 0.06 : 10) / 60;
       setCalories(prev => prev + (deltaSeconds * currentCalRatePerSecond));
-      
+
       if (hr > 0) {
         setHrHistory(h => [...h.slice(-180), hr]);
       }
     }, 1000);
   };
 
-
   // ── Pause tracking ───────────────────────────────────────────────────────────
-  const pauseTracking = () => {
+  const pauseTracking = async () => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (fgSubRef.current) { fgSubRef.current.remove(); fgSubRef.current = null; }
     if (startTimestampRef.current) {
       pausedDurationRef.current += Math.floor((Date.now() - startTimestampRef.current!) / 1000);
       startTimestampRef.current = null;
     }
-    // Note: background task keeps running so GPS coords still accumulate
+    // Also pause background task so distance does not accumulate while paused at a rest stop
+    await stopBgLocationTracking();
     setIsTracking(false);
   };
 
-
   const finishWorkout = async (skipNavigation = false) => {
-    pauseTracking();
+    await pauseTracking();
     await stopBgLocationTracking();
     // Sync any last coords from background
     await syncBgCoords();
 
-
     // XP Calculation
     const durationMinutes = duration / 60;
     const baseXP = Math.floor(durationMinutes * 10);
-    
+
     // Distance bonus (dependent on activity)
     let distanceBonus = 0;
     const distanceKm = distance / 1000;
@@ -279,7 +493,7 @@ export default function CardioTrackingScreen({ navigation }: Props) {
     let trueMaxHR = 0;
     let hrSum = 0;
     let hrCount = 0;
-    
+
     coordinates.forEach(c => {
       if (c.speed && c.speed > trueMaxSpeed) trueMaxSpeed = c.speed;
       if (c.heartRate && c.heartRate > 0) {
@@ -288,24 +502,35 @@ export default function CardioTrackingScreen({ navigation }: Props) {
         hrCount++;
       }
     });
-    
+
     const trueAvgHR = hrCount > 0 ? Math.round(hrSum / hrCount) : currentHRRef.current || 120;
     if (trueMaxHR === 0) trueMaxHR = currentHRRef.current || 140;
+
+    const sessionSpeedKmH = duration > 0 ? (distance / 1000) / (duration / 3600) : 0;
+    const sessionPaceStr = sessionSpeedKmH > 0
+      ? `${Math.floor(60 / sessionSpeedKmH)}:${String(Math.round(((60 / sessionSpeedKmH) % 1) * 60)).padStart(2, '0')}`
+      : '--:--';
 
     const session: CardioSession = {
       id: Date.now().toString(),
       type: activityType,
       date: new Date().toISOString(),
       durationSeconds: duration,
+      movingDurationSeconds: duration,
       distanceMeters: distance,
       caloriesBurned: Math.floor(calories),
       averageHeartRate: trueAvgHR,
       maxHeartRate: trueMaxHR,
-      maxSpeed: trueMaxSpeed > 0 ? (trueMaxSpeed * 3.6) : undefined, // Convert m/s to km/h
+      maxSpeed: trueMaxSpeed > 0 ? (trueMaxSpeed * 3.6) : (sessionSpeedKmH > 0 ? sessionSpeedKmH : undefined),
+      elevationGain: Math.round(elevationGain),
+      averagePace: sessionPaceStr,
+      averageWatts: activityType === 'Cycling' && sessionSpeedKmH > 0 ? Math.round(180 + sessionSpeedKmH * 3.2) : undefined,
+      splits: splits,
       routeCoordinates: coordinates.map(c => ({
         latitude: c.latitude,
         longitude: c.longitude,
         timestamp: c.timestamp,
+        altitude: c.altitude,
         speed: c.speed || 0,
         heartRate: c.heartRate || 0,
       })),
@@ -313,11 +538,20 @@ export default function CardioTrackingScreen({ navigation }: Props) {
       testType,
       xpEarned: earnedXP,
     };
-    
+
     addSession(session);
     if (earnedXP > 0) {
       addCardioXP(activityType, earnedXP);
       addXP(earnedXP); // Award global XP
+    }
+
+    // Award Iron Tactics cardio fitness fuel rewards automatically!
+    try {
+      useIronTacticsMetaStore.getState().claimFitnessAction('cardio_completed', {
+        cardioDurationMinutes: Math.round(duration / 60),
+      });
+    } catch {
+      // ignore
     }
 
     setLastCompletedSession(session);
@@ -433,8 +667,9 @@ export default function CardioTrackingScreen({ navigation }: Props) {
     <Modal visible={modalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setGlobalCardioModalVisible(false)}>
       <SafeAreaView style={[
         styles.safeArea,
+        { backgroundColor: '#0D1117' },
         (currentHR > 0) && {
-          borderWidth: 4,
+          borderWidth: 3,
           borderColor: getHeartRateZoneColor(currentHR, maxHeartRateSetting) || 'transparent',
           shadowColor: getHeartRateZoneColor(currentHR, maxHeartRateSetting) || 'transparent',
           shadowOffset: { width: 0, height: 0 },
@@ -443,249 +678,558 @@ export default function CardioTrackingScreen({ navigation }: Props) {
           elevation: 10,
         }
       ]}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => setGlobalCardioModalVisible(false)} style={{ padding: 8 }}>
-          <MaterialCommunityIcons name="chevron-down" size={28} color="#00D2FF" />
-        </TouchableOpacity>
-        <View style={{ alignItems: 'center' }}>
-          <Text style={styles.title}>{activityType}</Text>
-          {isTracking && (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#30D158', marginRight: 5 }} />
-              <Text style={{ color: '#30D158', fontSize: 11, fontWeight: '700' }}>LIVE</Text>
-            </View>
-          )}
-        </View>
-        <TouchableOpacity onPress={connectToHRMonitor} style={styles.btButton}>
-          <MaterialCommunityIcons
-            name="watch-variant"
-            size={24}
-            color={isWatchConnected ? '#30D158' : 'white'}
-          />
-        </TouchableOpacity>
-      </View>
-
-
-      {/* Map */}
-      <View style={styles.mapContainer}>
-        {coordinates.length > 0 ? (
-          <MapView
-            provider={PROVIDER_GOOGLE}
-            style={styles.map}
-            initialRegion={{
-              latitude: coordinates[0].latitude,
-              longitude: coordinates[0].longitude,
-              latitudeDelta: 0.01,
-              longitudeDelta: 0.01,
-            }}
-            showsUserLocation
-            followsUserLocation
-            customMapStyle={darkMapStyle}
-          >
-            <Polyline
-              coordinates={coordinates.map(c => ({ latitude: c.latitude, longitude: c.longitude }))}
-              strokeColor="#00D2FF"
-              strokeWidth={5}
-            />
-          </MapView>
-        ) : (
-          <View style={styles.noMap}>
+        {/* Header */}
+        <View style={[styles.header, { borderBottomColor: theme.subtleBorder }]}>
+          <TouchableOpacity onPress={() => setGlobalCardioModalVisible(false)} style={styles.headerBtn}>
+            <MaterialCommunityIcons name="chevron-down" size={28} color={theme.accent} />
+          </TouchableOpacity>
+          <View style={{ alignItems: 'center' }}>
+            <Text style={styles.title}>
+              {activityType === 'Running' ? 'Laufen' : activityType === 'Cycling' ? 'Radfahren' : activityType}
+            </Text>
             {isTracking ? (
-              <>
-                <MaterialCommunityIcons name="satellite-uplink" size={40} color="#00D2FF" />
-                <Text style={styles.noMapText}>Acquiring GPS signal…</Text>
-              </>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#30D158', marginRight: 5 }} />
+                <Text style={{ color: '#30D158', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 }}>AUFZEICHNUNG LIVE</Text>
+              </View>
             ) : (
-              <Text style={styles.noMapText}>Press START to begin tracking</Text>
+              <Text style={{ color: '#888', fontSize: 11, fontWeight: '600', marginTop: 2 }}>Bereit</Text>
             )}
           </View>
-        )}
-      </View>
-
-      {/* Metrics */}
-      <View style={styles.metricsContainer}>
-        <View style={styles.metricRow}>
-          <View style={styles.metric}>
-            <Text style={styles.metricValue}>{formatTime(duration)}</Text>
-            <Text style={styles.metricLabel}>TIME</Text>
-          </View>
-          <View style={styles.metric}>
-            <Text style={styles.metricValue}>{(distance / 1000).toFixed(2)}</Text>
-            <Text style={styles.metricLabel}>KM</Text>
-          </View>
+          <TouchableOpacity
+            onPress={connectToHRMonitor}
+            style={[styles.btButton, isWatchConnected && { backgroundColor: 'rgba(48,209,88,0.18)', borderColor: '#30D158' }]}
+          >
+            <MaterialCommunityIcons
+              name="watch-variant"
+              size={22}
+              color={isWatchConnected ? '#30D158' : '#888'}
+            />
+          </TouchableOpacity>
         </View>
-        <View style={styles.metricRow}>
-          <View style={styles.metric}>
-            <Text style={styles.metricValue}>{paceStr}</Text>
-            <Text style={styles.metricLabel}>MIN/KM</Text>
-          </View>
-          <View style={styles.metric}>
-            <Text style={styles.metricValue}>{speedKmH.toFixed(1)}</Text>
-            <Text style={styles.metricLabel}>KM/H</Text>
-          </View>
-          <View style={styles.metric}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-              {currentHR > 0 ? (
-                <>
-                  <Animated.View style={{ transform: [{ scale: heartScale }] }}>
-                    <MaterialCommunityIcons name="heart" color="#FF3B30" size={22} />
-                  </Animated.View>
-                  <Text style={styles.metricValue}>{' '}{currentHR}</Text>
-                </>
-              ) : <Text style={styles.metricValue}>--</Text>}
+
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 28 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* 1. Hero Pace / Speed Banner */}
+          <View style={[styles.heroCard, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+              <MaterialCommunityIcons
+                name={activityType === 'Cycling' ? 'bike-fast' : 'run-fast'}
+                size={16}
+                color={theme.accent}
+                style={{ marginRight: 6 }}
+              />
+              <Text style={[styles.heroCardLabel, { color: theme.accent }]}>
+                {activityType === 'Cycling' ? 'AKTUELLES TEMPO' : 'LIVE PACE'}
+              </Text>
             </View>
-            <Text style={styles.metricLabel}>BPM</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', marginVertical: 2 }}>
+              <Text style={[styles.heroCardValue, { color: theme.accent }]}>
+                {activityType === 'Cycling' ? speedKmH.toFixed(1) : paceStr}
+              </Text>
+              <Text style={[styles.heroCardUnit, { color: theme.accent }]}>
+                {activityType === 'Cycling' ? ' km/h' : ' min/km'}
+              </Text>
+            </View>
+            <Text style={styles.heroCardSub}>
+              {activityType === 'Cycling'
+                ? `Ø Schnitt: ${speedKmH.toFixed(1)} km/h • Leistung: ~${speedKmH > 0 ? Math.round(180 + speedKmH * 3.2) : 0} W`
+                : `Ø Pace: ${paceStr} • Tempo: ${speedKmH.toFixed(1)} km/h`}
+            </Text>
           </View>
-          <View style={styles.metric}>
-            <Text style={styles.metricValue}>{Math.floor(calories)}</Text>
-            <Text style={styles.metricLabel}>KCAL</Text>
+
+          {/* 2. Primary High-Readability Telemetry Grid (6 prominent cards) */}
+          <View style={styles.telemetryGrid}>
+            {/* DISTANZ */}
+            <View style={[styles.telemetryCard, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]}>
+              <View style={styles.telemetryCardHeader}>
+                <MaterialCommunityIcons name="map-marker-distance" size={16} color={theme.accent} />
+                <Text style={[styles.telemetryCardLabel, { color: theme.accent }]}>STRECKE</Text>
+              </View>
+              <Text style={[styles.telemetryCardValue, { color: '#FFF' }]}>
+                {(distance / 1000).toFixed(2)}
+                <Text style={[styles.telemetryCardUnit, { color: theme.accent }]}> km</Text>
+              </Text>
+            </View>
+
+            {/* ZEIT / DAUER */}
+            <View style={[styles.telemetryCard, { backgroundColor: theme.cardBg, borderColor: theme.subtleBorder }]}>
+              <View style={styles.telemetryCardHeader}>
+                <MaterialCommunityIcons name="timer-outline" size={16} color="#FFF" />
+                <Text style={styles.telemetryCardLabel}>ZEIT</Text>
+              </View>
+              <Text style={[styles.telemetryCardValue, { color: '#FFF' }]}>
+                {formatTime(duration)}
+              </Text>
+            </View>
+
+            {/* HÖHE */}
+            <View style={[styles.telemetryCard, { backgroundColor: theme.cardBg, borderColor: theme.subtleBorder }]}>
+              <View style={styles.telemetryCardHeader}>
+                <MaterialCommunityIcons name="elevation-rise" size={16} color="#FF9F0A" />
+                <Text style={[styles.telemetryCardLabel, { color: '#FF9F0A' }]}>HÖHE</Text>
+              </View>
+              <Text style={[styles.telemetryCardValue, { color: '#FF9F0A' }]}>
+                +{Math.round(elevationGain)}
+                <Text style={[styles.telemetryCardUnit, { color: '#FF9F0A' }]}> m</Text>
+              </Text>
+            </View>
+
+            {/* PULS */}
+            <View style={[styles.telemetryCard, { backgroundColor: theme.cardBg, borderColor: theme.subtleBorder }]}>
+              <View style={styles.telemetryCardHeader}>
+                <Animated.View style={{ transform: [{ scale: heartScale }] }}>
+                  <MaterialCommunityIcons name="heart" size={16} color="#FF3B30" />
+                </Animated.View>
+                <Text style={[styles.telemetryCardLabel, { color: '#FF3B30' }]}>PULS</Text>
+              </View>
+              <Text style={[styles.telemetryCardValue, { color: currentHR > 0 ? '#FF3B30' : '#888' }]}>
+                {currentHR > 0 ? currentHR : '--'}
+                {currentHR > 0 && <Text style={[styles.telemetryCardUnit, { color: '#FF3B30' }]}> bpm</Text>}
+              </Text>
+            </View>
+
+            {/* KALORIEN */}
+            <View style={[styles.telemetryCard, { backgroundColor: theme.cardBg, borderColor: theme.subtleBorder }]}>
+              <View style={styles.telemetryCardHeader}>
+                <MaterialCommunityIcons name="fire" size={16} color="#FF9500" />
+                <Text style={[styles.telemetryCardLabel, { color: '#FF9500' }]}>KALORIEN</Text>
+              </View>
+              <Text style={[styles.telemetryCardValue, { color: '#FFF' }]}>
+                {Math.floor(calories)}
+                <Text style={styles.telemetryCardUnit}> kcal</Text>
+              </Text>
+            </View>
+
+            {/* SCHNITT */}
+            <View style={[styles.telemetryCard, { backgroundColor: theme.cardBg, borderColor: theme.subtleBorder }]}>
+              <View style={styles.telemetryCardHeader}>
+                <MaterialCommunityIcons name="speedometer" size={16} color={theme.accent} />
+                <Text style={[styles.telemetryCardLabel, { color: theme.accent }]}>
+                  {activityType === 'Cycling' ? 'Ø SPEED' : 'Ø PACE'}
+                </Text>
+              </View>
+              <Text style={[styles.telemetryCardValue, { color: '#FFF', fontSize: 18 }]}>
+                {activityType === 'Cycling' ? `${speedKmH.toFixed(1)} km/h` : paceStr}
+              </Text>
+            </View>
           </View>
-        </View>
 
+          {/* 3. Compact Map Card (takes only ~180px instead of dominating the whole screen!) */}
+          <View style={[styles.compactMapCard, { borderColor: theme.cardBorder, backgroundColor: theme.cardBg }]}>
+            <MapView
+              ref={mapRef}
+              provider={PROVIDER_GOOGLE}
+              style={styles.compactMap}
+              initialRegion={{
+                latitude: initialLocation?.latitude || (coordinates[0]?.latitude ?? 47.3769),
+                longitude: initialLocation?.longitude || (coordinates[0]?.longitude ?? 8.5417),
+                latitudeDelta: 0.005,
+                longitudeDelta: 0.005,
+              }}
+              showsUserLocation
+              followsUserLocation={true}
+              showsMyLocationButton={false}
+              showsCompass={false}
+              customMapStyle={darkMapStyle}
+            >
+              {coordinates.length > 1 && (
+                <Polyline
+                  coordinates={coordinates.map(c => ({ latitude: c.latitude, longitude: c.longitude }))}
+                  strokeColor={theme.accent}
+                  strokeWidth={4.5}
+                />
+              )}
+              {coordinates.length > 0 && (
+                <Marker
+                  coordinate={{ latitude: coordinates[0].latitude, longitude: coordinates[0].longitude }}
+                  title="Startpunkt"
+                  pinColor="#30D158"
+                />
+              )}
+            </MapView>
 
-        {/* Controls */}
-        <View style={styles.controls}>
-          {!isTracking && duration === 0 && (
-            <TouchableOpacity style={[styles.btn, { backgroundColor: '#30D158' }]} onPress={startTracking}>
-              <Text style={styles.btnText}>START</Text>
+            {/* Floating Recenter Button */}
+            <TouchableOpacity
+              style={[styles.recenterMapBtn, { backgroundColor: 'rgba(13, 17, 23, 0.90)', borderColor: theme.subtleBorder }]}
+              onPress={recenterMap}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons name="crosshairs-gps" size={17} color={theme.accent} />
             </TouchableOpacity>
+
+            {/* Auto-Pause Overlay Banner */}
+            {isAutoPaused && (
+              <View style={styles.autoPauseBanner}>
+                <MaterialCommunityIcons name="pause-circle" size={15} color="#FF9F0A" style={{ marginRight: 6 }} />
+                <Text style={styles.autoPauseText}>Auto-Pause (Stillstand erkannt)</Text>
+              </View>
+            )}
+
+            {/* Floating Route Status Chip */}
+            <View style={[styles.floatingMapChip, { borderColor: theme.subtleBorder }]}>
+              <MaterialCommunityIcons name="crosshairs-gps" size={12} color={theme.accent} style={{ marginRight: 5 }} />
+              <Text style={styles.floatingMapChipText}>
+                {isTracking ? `${(distance / 1000).toFixed(2)} km • ${coordinates.length} Wegpunkte` : 'GPS bereit • Tippe auf START'}
+              </Text>
+            </View>
+          </View>
+
+          {/* 4. Split Live Pill */}
+          {splits.length > 0 && (
+            <View style={[styles.splitLivePill, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]}>
+              <Text style={styles.splitLivePillText}>
+                Letzter Split (KM {splits.length}): <Text style={{ color: theme.accent, fontWeight: '800' }}>{splits[splits.length - 1].averagePaceMinKm} min/km</Text> • ❤️ {splits[splits.length - 1].averageHeartRate} BPM • {splits[splits.length - 1].elevationDeltaMeters >= 0 ? `+${splits[splits.length - 1].elevationDeltaMeters}m` : `${splits[splits.length - 1].elevationDeltaMeters}m`}
+              </Text>
+            </View>
           )}
-          {isTracking && (
-            <>
+
+          {/* 5. Ergonomic Action Controls */}
+          <View style={styles.controls}>
+            {!isTracking && duration === 0 && (
               <TouchableOpacity
-                style={[styles.btn, { backgroundColor: '#FF9500', flex: 1, marginRight: 10 }]}
-                onPress={pauseTracking}
-              >
-                <Text style={styles.btnText}>PAUSE</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.btn, { backgroundColor: '#1E1E1E', flex: 1 }]}
-                onPress={() => finishWorkout()}
-              >
-                <Text style={styles.btnText}>FINISH</Text>
-              </TouchableOpacity>
-            </>
-          )}
-          {!isTracking && duration > 0 && (
-            <>
-              <TouchableOpacity
-                style={[styles.btn, { backgroundColor: '#30D158', flex: 1, marginRight: 10 }]}
+                style={[styles.btn, { backgroundColor: theme.accent, shadowColor: theme.accent }]}
                 onPress={startTracking}
               >
-                <Text style={styles.btnText}>RESUME</Text>
+                <MaterialCommunityIcons name="play" size={24} color="#000" style={{ marginRight: 6 }} />
+                <Text style={[styles.btnText, { color: '#000' }]}>START</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.btn, { backgroundColor: '#1E1E1E', flex: 1 }]}
-                onPress={() => finishWorkout()}
-              >
-                <Text style={styles.btnText}>FINISH</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-
-        {/* Background indicator */}
-        {isTracking && (
-          <View style={styles.bgBadge}>
-            <MaterialCommunityIcons name="wifi" size={12} color="#30D158" />
-            <Text style={styles.bgBadgeText}> GPS tracking active in background</Text>
-          </View>
-        )}
-      </View>
-
-      {/* CELEBRATION MODAL */}
-      <Modal visible={celebrationModalVisible} animationType="slide" transparent={true}>
-        <View style={styles.celebrationOverlay}>
-          <View style={styles.celebrationCard}>
-            {lastCompletedSession && (
+            )}
+            {isTracking && (
               <>
-                <MaterialCommunityIcons name="party-popper" size={48} color="#FFD700" style={{ marginBottom: 16 }} />
-                <Text style={styles.celebrationTitle}>Workout Complete!</Text>
-                
-                <View style={styles.celebrationStatsGrid}>
-                  <View style={styles.celebrationStat}>
-                    <Text style={styles.celebrationStatVal}>{Math.floor(lastCompletedSession.durationSeconds / 60)}</Text>
-                    <Text style={styles.celebrationStatLabel}>Min</Text>
-                  </View>
-                  <View style={styles.celebrationStat}>
-                    <Text style={styles.celebrationStatVal}>{(lastCompletedSession.distanceMeters / 1000).toFixed(2)}</Text>
-                    <Text style={styles.celebrationStatLabel}>Km</Text>
-                  </View>
-                  <View style={styles.celebrationStat}>
-                    <Text style={styles.celebrationStatVal}>{lastCompletedSession.averageHeartRate}</Text>
-                    <Text style={styles.celebrationStatLabel}>BPM</Text>
-                  </View>
-                  <View style={styles.celebrationStat}>
-                    <Text style={styles.celebrationStatVal}>{lastCompletedSession.caloriesBurned}</Text>
-                    <Text style={styles.celebrationStatLabel}>kcal</Text>
-                  </View>
-                </View>
-
-                {lastCompletedSession.xpEarned && lastCompletedSession.xpEarned > 0 && (
-                  <View style={styles.celebrationXpBox}>
-                    <Text style={styles.celebrationXpText}>+{lastCompletedSession.xpEarned} {lastCompletedSession.type} XP</Text>
-                    
-                    {(() => {
-                      const levelData = getCardioLevelData(cardioXP[lastCompletedSession.type] || 0);
-                      const progressPercent = Math.min(100, (levelData.progressXP / levelData.neededXP) * 100);
-                      return (
-                        <View style={{ width: '100%', marginTop: 12 }}>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                            <Text style={{ color: levelData.rankColor, fontWeight: '700' }}>Level {levelData.level}</Text>
-                            <Text style={{ color: '#888', fontSize: 12 }}>{levelData.neededXP - levelData.progressXP} XP to go</Text>
-                          </View>
-                          <View style={styles.celebrationProgressBar}>
-                            <View style={[styles.celebrationProgressFill, { width: `${progressPercent}%`, backgroundColor: levelData.rankColor }]} />
-                          </View>
-                        </View>
-                      );
-                    })()}
-                  </View>
-                )}
-
-                <TouchableOpacity style={styles.celebrationCloseBtn} onPress={closeCelebrationAndExit}>
-                  <Text style={styles.celebrationCloseText}>Continue</Text>
+                <TouchableOpacity
+                  style={[styles.btn, { backgroundColor: '#FF9500', flex: 1, marginRight: 10 }]}
+                  onPress={pauseTracking}
+                >
+                  <MaterialCommunityIcons name="pause" size={20} color="#FFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.btnText}>PAUSE</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.btn, { backgroundColor: theme.cardBg, borderWidth: 1, borderColor: theme.cardBorder, flex: 1 }]}
+                  onPress={() => finishWorkout()}
+                >
+                  <MaterialCommunityIcons name="stop" size={20} color="#FF453A" style={{ marginRight: 6 }} />
+                  <Text style={[styles.btnText, { color: '#FF453A' }]}>BEENDEN</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            {!isTracking && duration > 0 && (
+              <>
+                <TouchableOpacity
+                  style={[styles.btn, { backgroundColor: theme.accent, flex: 1, marginRight: 10 }]}
+                  onPress={startTracking}
+                >
+                  <MaterialCommunityIcons name="play" size={20} color="#000" style={{ marginRight: 6 }} />
+                  <Text style={[styles.btnText, { color: '#000' }]}>WEITER</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.btn, { backgroundColor: theme.cardBg, borderWidth: 1, borderColor: theme.cardBorder, flex: 1 }]}
+                  onPress={() => finishWorkout()}
+                >
+                  <MaterialCommunityIcons name="stop" size={20} color="#FF453A" style={{ marginRight: 6 }} />
+                  <Text style={[styles.btnText, { color: '#FF453A' }]}>BEENDEN</Text>
                 </TouchableOpacity>
               </>
             )}
           </View>
-        </View>
-      </Modal>
+
+          {/* 6. Standby Tracking Guarantee Badge */}
+          {isTracking && (
+            <View style={styles.bgBadge}>
+              <MaterialCommunityIcons name="shield-check" size={13} color="#30D158" />
+              <Text style={styles.bgBadgeText}> Lückenloses Tracking im Ruhezustand aktiv</Text>
+            </View>
+          )}
+        </ScrollView>
+
+        {/* CELEBRATION MODAL */}
+        <Modal visible={celebrationModalVisible} animationType="slide" transparent={true}>
+          <View style={styles.celebrationOverlay}>
+            <View style={[styles.celebrationCard, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]}>
+              {lastCompletedSession && (
+                <>
+                  <MaterialCommunityIcons name="party-popper" size={48} color="#FFD700" style={{ marginBottom: 14 }} />
+                  <Text style={styles.celebrationTitle}>Workout abgeschlossen!</Text>
+                  
+                  <View style={styles.celebrationStatsGrid}>
+                    <View style={[styles.celebrationStat, { backgroundColor: '#10141A', borderColor: theme.subtleBorder }]}>
+                      <Text style={styles.celebrationStatVal}>{Math.floor(lastCompletedSession.durationSeconds / 60)}</Text>
+                      <Text style={styles.celebrationStatLabel}>Minuten</Text>
+                    </View>
+                    <View style={[styles.celebrationStat, { backgroundColor: '#10141A', borderColor: theme.subtleBorder }]}>
+                      <Text style={[styles.celebrationStatVal, { color: theme.accent }]}>{(lastCompletedSession.distanceMeters / 1000).toFixed(2)}</Text>
+                      <Text style={styles.celebrationStatLabel}>Kilometer</Text>
+                    </View>
+                    <View style={[styles.celebrationStat, { backgroundColor: '#10141A', borderColor: theme.subtleBorder }]}>
+                      <Text style={[styles.celebrationStatVal, { color: '#FF3B30' }]}>{lastCompletedSession.averageHeartRate || '--'}</Text>
+                      <Text style={styles.celebrationStatLabel}>Ø BPM</Text>
+                    </View>
+                    <View style={[styles.celebrationStat, { backgroundColor: '#10141A', borderColor: theme.subtleBorder }]}>
+                      <Text style={[styles.celebrationStatVal, { color: '#FF9500' }]}>{Math.round(lastCompletedSession.caloriesBurned)}</Text>
+                      <Text style={styles.celebrationStatLabel}>kcal</Text>
+                    </View>
+                  </View>
+
+                  {lastCompletedSession.xpEarned && lastCompletedSession.xpEarned > 0 && (
+                    <View style={[styles.celebrationXpBox, { backgroundColor: '#10141A', borderColor: theme.cardBorder }]}>
+                      <Text style={[styles.celebrationXpText, { color: theme.accent }]}>
+                        +{lastCompletedSession.xpEarned} {lastCompletedSession.type} XP
+                      </Text>
+                      
+                      {(() => {
+                        const levelData = getCardioLevelData(cardioXP[lastCompletedSession.type] || 0);
+                        const progressPercent = Math.min(100, (levelData.progressXP / levelData.neededXP) * 100);
+                        return (
+                          <View style={{ width: '100%', marginTop: 12 }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                              <Text style={{ color: levelData.rankColor, fontWeight: '700' }}>Level {levelData.level}</Text>
+                              <Text style={{ color: '#888', fontSize: 12 }}>{levelData.neededXP - levelData.progressXP} XP to go</Text>
+                            </View>
+                            <View style={styles.celebrationProgressBar}>
+                              <View style={[styles.celebrationProgressFill, { width: `${progressPercent}%`, backgroundColor: levelData.rankColor }]} />
+                            </View>
+                          </View>
+                        );
+                      })()}
+                    </View>
+                  )}
+
+                  {/* Iron Tactics Reward Banner */}
+                  <View style={{
+                    width: '100%',
+                    backgroundColor: 'rgba(255, 215, 0, 0.08)',
+                    borderRadius: 14,
+                    borderWidth: 1,
+                    borderColor: 'rgba(255, 215, 0, 0.3)',
+                    padding: 10,
+                    marginBottom: 14,
+                  }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                      <MaterialCommunityIcons name="sword-cross" size={16} color="#FFD700" style={{ marginRight: 6 }} />
+                      <Text style={{ color: '#FFD700', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 }}>IRON TACTICS TREIBSTOFF</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <View style={{ flex: 1, alignItems: 'center', backgroundColor: '#1C1C24', paddingVertical: 6, borderRadius: 8, marginHorizontal: 2 }}>
+                        <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '900' }}>⚡ +1</Text>
+                        <Text style={{ color: '#A0A0B0', fontSize: 8, fontWeight: '600', marginTop: 1 }}>Pump</Text>
+                      </View>
+                      <View style={{ flex: 1, alignItems: 'center', backgroundColor: '#1C1C24', paddingVertical: 6, borderRadius: 8, marginHorizontal: 2 }}>
+                        <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '900' }}>🥤 +1</Text>
+                        <Text style={{ color: '#A0A0B0', fontSize: 8, fontWeight: '600', marginTop: 1 }}>Shake</Text>
+                      </View>
+                      <View style={{ flex: 1, alignItems: 'center', backgroundColor: '#1C1C24', paddingVertical: 6, borderRadius: 8, marginHorizontal: 2 }}>
+                        <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '900' }}>🎖️ +40</Text>
+                        <Text style={{ color: '#A0A0B0', fontSize: 8, fontWeight: '600', marginTop: 1 }}>Tactician XP</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.celebrationCloseBtn, { backgroundColor: theme.accent }]}
+                    onPress={closeCelebrationAndExit}
+                  >
+                    <Text style={styles.celebrationCloseText}>Weiter</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#121212' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, alignItems: 'center' },
-  title: { color: 'white', fontSize: 22, fontWeight: 'bold' },
-  btButton: { padding: 10, backgroundColor: '#1E1E1E', borderRadius: 50 , marginBottom: 12 },
-  mapContainer: { flex: 1, backgroundColor: '#1E1E1E' },
-  map: { width: '100%', height: '100%' },
-  noMap: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 },
-  noMapText: { color: '#888', fontSize: 15 },
-  metricsContainer: { padding: 20, backgroundColor: '#121212', borderTopWidth: 1, borderColor: '#282828' },
-  metricRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
-  metric: { alignItems: 'center', flex: 1 },
-  metricValue: { color: 'white', fontSize: 28, fontWeight: 'bold' },
-  metricLabel: { color: '#888', fontSize: 12, marginTop: 4, fontWeight: '600' },
-  controls: { flexDirection: 'row', justifyContent: 'center' },
-  btn: { paddingVertical: 18, paddingHorizontal: 40, borderRadius: 100, alignItems: 'center', minWidth: 150 },
-  btnText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
+  safeArea: { flex: 1, backgroundColor: '#0D1117' },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderBottomWidth: 1,
+  },
+  headerBtn: { padding: 6 },
+  title: { color: 'white', fontSize: 19, fontWeight: '800' },
+  btButton: {
+    padding: 8,
+    backgroundColor: '#1E242B',
+    borderRadius: 50,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  heroCard: {
+    padding: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: 'center',
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  heroCardLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  heroCardValue: {
+    fontSize: 42,
+    fontWeight: '900',
+    letterSpacing: -1,
+  },
+  heroCardUnit: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  heroCardSub: {
+    color: '#8A99A8',
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  telemetryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  telemetryCard: {
+    width: '48.5%',
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  telemetryCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  telemetryCardLabel: {
+    color: '#8A99A8',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginLeft: 5,
+  },
+  telemetryCardValue: {
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  telemetryCardUnit: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8A99A8',
+  },
+  compactMapCard: {
+    height: 180,
+    width: '100%',
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 1,
+    position: 'relative',
+    marginBottom: 12,
+  },
+  compactMap: {
+    width: '100%',
+    height: '100%',
+  },
+  autoPauseBanner: {
+    position: 'absolute',
+    top: 10,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 159, 10, 0.95)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 6,
+    zIndex: 10,
+  },
+  autoPauseText: { color: '#000', fontSize: 11, fontWeight: '800' },
+  recenterMapBtn: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    zIndex: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  floatingMapChip: {
+    position: 'absolute',
+    bottom: 10,
+    left: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(13, 17, 23, 0.90)',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    zIndex: 10,
+  },
+  floatingMapChipText: { color: '#FFF', fontSize: 10, fontWeight: '700' },
+  splitLivePill: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    alignSelf: 'center',
+    marginBottom: 14,
+    width: '100%',
+  },
+  splitLivePillText: { color: '#C5D1DE', fontSize: 11, fontWeight: '600', textAlign: 'center' },
+  controls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  btn: {
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    minWidth: 140,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  btnText: { color: 'white', fontSize: 15, fontWeight: '800', letterSpacing: 0.5 },
   bgBadge: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 12 },
   bgBadgeText: { color: '#30D158', fontSize: 11, fontWeight: '600' },
-  celebrationOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', padding: 20 },
-  celebrationCard: { backgroundColor: '#1E1E1E', borderRadius: 24, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
-  celebrationTitle: { color: 'white', fontSize: 24, fontWeight: '800', marginBottom: 24 },
-  celebrationStatsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', width: '100%', marginBottom: 24 },
-  celebrationStat: { width: '48%', backgroundColor: '#121212', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 12 },
-  celebrationStatVal: { color: 'white', fontSize: 24, fontWeight: '800' },
-  celebrationStatLabel: { color: '#888', fontSize: 12, fontWeight: '600', marginTop: 4 },
-  celebrationXpBox: { width: '100%', backgroundColor: '#2A2A2A', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 24, borderWidth: 1, borderColor: '#444' },
-  celebrationXpText: { color: '#00D2FF', fontSize: 20, fontWeight: '800' },
-  celebrationProgressBar: { width: '100%', height: 8, backgroundColor: '#121212', borderRadius: 4, overflow: 'hidden' },
+  celebrationOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', justifyContent: 'center', padding: 20 },
+  celebrationCard: { borderRadius: 24, padding: 22, alignItems: 'center', borderWidth: 1 },
+  celebrationTitle: { color: 'white', fontSize: 22, fontWeight: '800', marginBottom: 20 },
+  celebrationStatsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', width: '100%', marginBottom: 18 },
+  celebrationStat: { width: '48%', padding: 14, borderRadius: 14, alignItems: 'center', marginBottom: 10, borderWidth: 1 },
+  celebrationStatVal: { color: 'white', fontSize: 22, fontWeight: '800' },
+  celebrationStatLabel: { color: '#888', fontSize: 11, fontWeight: '600', marginTop: 3 },
+  celebrationXpBox: { width: '100%', padding: 14, borderRadius: 14, alignItems: 'center', marginBottom: 16, borderWidth: 1 },
+  celebrationXpText: { fontSize: 18, fontWeight: '800' },
+  celebrationProgressBar: { width: '100%', height: 8, backgroundColor: '#0D1117', borderRadius: 4, overflow: 'hidden' },
   celebrationProgressFill: { height: '100%', borderRadius: 4 },
-  celebrationCloseBtn: { backgroundColor: '#00D2FF', width: '100%', padding: 16, borderRadius: 100, alignItems: 'center' , marginBottom: 12 },
-  celebrationCloseText: { color: '#000', fontSize: 16, fontWeight: '800' },
+  celebrationCloseBtn: { width: '100%', padding: 15, borderRadius: 100, alignItems: 'center' },
+  celebrationCloseText: { color: '#000', fontSize: 15, fontWeight: '800' },
 });

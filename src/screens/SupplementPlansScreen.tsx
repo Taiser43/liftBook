@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, SafeAreaView, Switch } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Switch, Platform, StatusBar } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppStore, SupplementPlan, SupplementStack, SupplementTarget, SupplementLibraryItem } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 import SwipeableModal from '../components/SwipeableModal';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 
 const TIME_OF_DAY = ['Morning', 'Afternoon', 'Evening', 'Bedtime', 'Pre-Workout', 'Post-Workout'];
 
 export default function SupplementPlansScreen({ navigation }: any) {
-  const { supplementPlans, addSupplementPlan, updateSupplementPlan, deleteSupplementPlan, setActiveSupplementPlan, supplementLibrary } = useAppStore();
+  const insets = useSafeAreaInsets();
+  const { supplementPlans, addSupplementPlan, updateSupplementPlan, deleteSupplementPlan, setActiveSupplementPlan, supplementLibrary, accentThemeId } = useAppStore();
+  const theme = getAppTheme(accentThemeId);
 
   const [planModalVisible, setPlanModalVisible] = useState(false);
   const [editingPlan, setEditingPlan] = useState<SupplementPlan | null>(null);
@@ -138,14 +142,14 @@ export default function SupplementPlansScreen({ navigation }: any) {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={[styles.safeArea, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 44) + 12 }]}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
           <MaterialCommunityIcons name="arrow-left" size={28} color="white" />
         </TouchableOpacity>
         <Text style={styles.title}>Supplement Plans</Text>
         <View style={{ flex: 1 }} />
-        <TouchableOpacity style={styles.addBtnHeader} onPress={openAddPlan}>
+        <TouchableOpacity style={[styles.addBtnHeader, { backgroundColor: theme.accent }]} onPress={openAddPlan}>
           <MaterialCommunityIcons name="plus" size={24} color="#000" />
         </TouchableOpacity>
       </View>
@@ -155,16 +159,26 @@ export default function SupplementPlansScreen({ navigation }: any) {
         keyExtractor={item => item.id}
         contentContainerStyle={styles.listContainer}
         renderItem={({ item }) => (
-          <TouchableOpacity style={[styles.card, item.isActive && styles.cardActive]} onPress={() => openEditPlan(item)}>
+          <TouchableOpacity
+            style={[
+              styles.card,
+              { backgroundColor: theme.cardBg, borderColor: item.isActive ? theme.accent : theme.cardBorder },
+            ]}
+            onPress={() => openEditPlan(item)}
+          >
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{item.name}</Text>
               <Text style={styles.cardSubtitle}>{item.stacks.length} Stacks</Text>
             </View>
             <TouchableOpacity 
-              style={[styles.activateBtn, item.isActive && styles.activateBtnActive]} 
+              style={[
+                styles.activateBtn,
+                { backgroundColor: theme.subCardBg, borderColor: theme.subtleBorder },
+                item.isActive && { backgroundColor: theme.accentBgSoft, borderColor: theme.accent }
+              ]} 
               onPress={() => setActiveSupplementPlan(item.id)}
             >
-              <Text style={[styles.activateBtnText, item.isActive && { color: '#00D2FF' }]}>
+              <Text style={[styles.activateBtnText, item.isActive && { color: theme.accent }]}>
                 {item.isActive ? 'Active' : 'Activate'}
               </Text>
             </TouchableOpacity>
@@ -340,17 +354,16 @@ export default function SupplementPlansScreen({ navigation }: any) {
           </>
         )}
       </SwipeableModal>
-
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#121212' },
-  header: { flexDirection: 'row', alignItems: 'center', padding: 20, paddingTop: 10 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, minHeight: 44, marginBottom: 14, paddingTop: 0 },
   backBtn: { marginRight: 15 },
-  title: { color: 'white', fontSize: 24, fontWeight: 'bold' },
-  addBtnHeader: { backgroundColor: '#00D2FF', width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
+  title: { color: 'white', fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+  addBtnHeader: { backgroundColor: '#00D2FF', width: 38, height: 38, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   listContainer: { paddingHorizontal: 20, paddingBottom: 100 },
   card: { backgroundColor: '#1E1E1E', borderRadius: 16, padding: 20, marginBottom: 15, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#333' },
   cardActive: { borderColor: '#00D2FF' },

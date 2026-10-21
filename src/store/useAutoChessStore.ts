@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Vibration } from 'react-native';
-import { PRELOADED_EXERCISES } from '../data/exercises';
+import { PRELOADED_EXERCISES, resolveExerciseMuscleInfo, normalizeMuscleCategory } from '../data/exercises';
 import { CompletedWorkout, WorkoutProgram, WorkoutPlan } from './store';
 import { getLevelData } from '../utils/gamification';
 import { getResolvedUri } from '../utils/uriResolver';
@@ -21,6 +21,7 @@ export interface AutoChessCardData {
   id: string; // unique card definition id (e.g. exercise name normalized)
   exerciseName: string;
   category: MuscleCategory;
+  targetMuscle?: string;
   equipmentType: string;
   imageUri?: string;
   rank: 'Bronze' | 'Silver' | 'Gold' | 'Emerald' | 'Challenger';
@@ -125,51 +126,31 @@ export interface AutoChessState {
   buyShopItem: () => boolean;
   equipItem: (unitInstanceId: string, itemId: string) => boolean;
   unequipItem: (unitInstanceId: string, itemIndex: number) => void;
+  useConsumableItem: (itemId: string, targetInstanceId: string) => boolean;
   claimLootDrop: () => void;
   setLootDrop: (item: AutoChessItem | null) => void;
   sellUnit: (instanceId: string, from: 'board' | 'bench') => void;
   moveUnit: (instanceId: string, to: 'board' | 'bench', targetSlotIndex?: number) => void;
   swapBoardUnits: (fromIndex: number, toIndex: number) => void;
+  swapUnits: (fromLocation: 'board' | 'bench', fromIndex: number, toLocation: 'board' | 'bench', toIndex: number) => void;
   saveBoardUnitHps: (hps: Record<string, number>) => void;
   recordWaveVictory: (isBoss?: boolean, isMiniBoss?: boolean) => { trophiesGained: number; coinsGained: number; droppedItem: AutoChessItem | null };
+  recordWaveDefeat: (isMiniBoss?: boolean) => { coinsGained: number; trophiesLost: number };
   spawnNextWave: () => void;
   triggerBossEncounter: () => void;
   claimTrophyMilestone: (milestoneId: string) => void;
+  isBoardDragging: boolean;
+  setIsBoardDragging: (isDragging: boolean) => void;
   resetCombat: () => void;
   getActiveSynergies: () => ActiveSynergy[];
   calculatePlayerCombatPower: () => number;
   addExerciseToLivePool: (exercise: { name: string; equipmentType?: string; imageUri?: string }) => void;
 }
 
-// Map exercise name to muscle category
-export const getExerciseCategory = (exerciseName: string): MuscleCategory => {
-  const name = exerciseName.toLowerCase();
-  const preloaded = PRELOADED_EXERCISES.find(p => p.name.toLowerCase() === name);
-  if (preloaded) {
-    if (preloaded.category === 'Chest') return 'Chest';
-    if (preloaded.category === 'Back') return 'Back';
-    if (preloaded.category === 'Shoulders') return 'Shoulders';
-    if (preloaded.category === 'Arms') return 'Arms';
-    if (preloaded.category === 'Legs') return 'Legs';
-    return 'Core';
-  }
-
-  if (name.includes('chest') || name.includes('bench') || name.includes('pec') || name.includes('push-up') || name.includes('pushup') || name.includes('fly') || name.includes('dip')) {
-    return 'Chest';
-  }
-  if (name.includes('back') || name.includes('row') || name.includes('lat') || name.includes('pull-up') || name.includes('pullup') || name.includes('chin-up') || name.includes('pulldown') || name.includes('deadlift')) {
-    return 'Back';
-  }
-  if (name.includes('shoulder') || name.includes('overhead') || name.includes('ohp') || name.includes('lateral') || name.includes('delt') || name.includes('shrug') || name.includes('arnold')) {
-    return 'Shoulders';
-  }
-  if (name.includes('curl') || name.includes('bicep') || name.includes('tricep') || name.includes('extension') || name.includes('skull') || name.includes('hammer')) {
-    return 'Arms';
-  }
-  if (name.includes('leg') || name.includes('squat') || name.includes('lunge') || name.includes('calf') || name.includes('hamstring') || name.includes('quad') || name.includes('press') || name.includes('rdl')) {
-    return 'Legs';
-  }
-  return 'Core';
+// Map exercise name to muscle category using the single source of truth in exercises.ts
+export const getExerciseCategory = (exerciseName: string, customExercises?: any[]): MuscleCategory => {
+  const custom = customExercises || (useAppStore.getState ? useAppStore.getState().customExercises : undefined);
+  return resolveExerciseMuscleInfo(exerciseName, custom).majorGroup;
 };
 
 // Trait descriptions for 3-unit MAX synergies
@@ -182,19 +163,20 @@ const CATEGORY_TRAITS: Record<MuscleCategory, { name: string; desc: string }> = 
   Core: { name: 'Iron Core', desc: 'Verstärkt alle benachbarten Einheiten um +15% Stats.' },
 };
 
-// Calculate card stats from workout history
-const buildCardData = (
+// Calculate card stats from workout history and exercise library
+export const buildCardData = (
   exerciseName: string, 
   category: MuscleCategory, 
   equipmentType: string, 
   history: CompletedWorkout[],
-  imageUri?: string
+  imageUri?: string,
+  targetMuscle?: string
 ): AutoChessCardData => {
   let totalSets = 0;
   let maxWeight = 0;
 
-  history.forEach(w => {
-    const ex = w.exercises.find(e => e.name.toLowerCase() === exerciseName.toLowerCase());
+  (history || []).forEach(w => {
+    const ex = w.exercises?.find(e => e.name.toLowerCase() === exerciseName.toLowerCase());
     if (ex && ex.sets) {
       ex.sets.forEach(s => {
         totalSets += 1;
@@ -207,7 +189,14 @@ const buildCardData = (
   const levelData = getLevelData(xp);
   const rank = levelData.rank as 'Bronze' | 'Silver' | 'Gold' | 'Emerald' | 'Challenger';
 
-  const effectiveMaxWeight = maxWeight > 0 ? maxWeight : 20 + (rank === 'Silver' ? 15 : rank === 'Gold' ? 30 : rank === 'Emerald' ? 45 : rank === 'Challenger' ? 60 : 0);
+  // Read default weight from exercise defaults if no workout history exists yet
+  const defaults = useAppStore.getState?.()?.exerciseDefaults?.[exerciseName];
+  const fallbackWeight = defaults?.weight && defaults.weight > 0 ? defaults.weight : 0;
+
+  const effectiveMaxWeight = maxWeight > 0 
+    ? maxWeight 
+    : (fallbackWeight > 0 ? fallbackWeight : 20 + (rank === 'Silver' ? 15 : rank === 'Gold' ? 30 : rank === 'Emerald' ? 45 : rank === 'Challenger' ? 60 : 0));
+  
   const baseAtk = Math.max(20, Math.round(effectiveMaxWeight * 0.8 + totalSets * 2));
   const baseHp = Math.max(50, Math.round(effectiveMaxWeight * 1.6 + totalSets * 4 + 40));
 
@@ -228,6 +217,7 @@ const buildCardData = (
     id: exerciseName.trim(),
     exerciseName: exerciseName.trim(),
     category,
+    targetMuscle,
     equipmentType: equipmentType || 'Freie Übung',
     imageUri,
     rank,
@@ -271,6 +261,9 @@ const rollShopCards = (pool: AutoChessCardData[], count: number = 3): AutoChessC
   return selected;
 };
 
+// Mini-Boss wave check: Spawns every 3 waves (Wave 3, 6, 9, 12, etc.)
+export const isMiniBossWave = (wave: number): boolean => wave >= 3 && wave % 3 === 0;
+
 // Generate intelligent enemy squad using Hybrid Rubber-Band Balancing
 const generateEnemySquad = (
   round: number,
@@ -282,6 +275,8 @@ const generateEnemySquad = (
   workoutExercises: Array<{ name: string; equipmentType?: string; imageUri?: string }> = [],
   isMiniBoss: boolean = false
 ): EnemySquad => {
+  const isMiniBossEffective = isMiniBoss || (!isBoss && isMiniBossWave(wave));
+
   // 1. Calculate player combat power (CP)
   let playerCp = 0;
   playerUnits.forEach(u => {
@@ -290,21 +285,21 @@ const generateEnemySquad = (
   if (activeWaveBonusStacks > 0) {
     playerCp *= (1 + activeWaveBonusStacks * 0.1);
   }
-  const minBaselineCp = 180 + round * 30;
+  const minBaselineCp = 160 + round * 25;
   if (playerCp < minBaselineCp) {
     playerCp = minBaselineCp;
   }
 
-  // 2. Determine target CP
-  let targetCp = Math.round(playerCp * 0.85); // Wave 1 default
+  // 2. Determine target CP with smooth, fair progression
+  let targetCp = Math.round(playerCp * 0.78); // Wave 1: Warmup & confident start
   if (isBoss) {
-    targetCp = Math.round(playerCp * 1.15);
-  } else if (isMiniBoss || wave === 4) {
-    targetCp = Math.round(playerCp * 1.25);
+    targetCp = Math.round(playerCp * 1.15); // End-of-workout Boss
+  } else if (isMiniBossEffective) {
+    targetCp = Math.round(playerCp * 1.04); // Mini-Boss: challenging encounter
   } else if (wave === 2) {
-    targetCp = Math.round(playerCp * 1.02);
+    targetCp = Math.round(playerCp * 0.86); // Wave 2: balanced
   } else if (wave >= 3) {
-    targetCp = Math.round(playerCp * (1.12 + (wave - 3) * 0.08));
+    targetCp = Math.round(playerCp * (0.92 + (wave - 3) * 0.05)); // Gentle climb
   }
 
   // 3. Option A: Shadow Titan Boss
@@ -329,9 +324,9 @@ const generateEnemySquad = (
       const category = getExerciseCategory(ex.name);
       const trait = CATEGORY_TRAITS[category] || { name: 'Schatten-Hieb', desc: '+25% Schattenkraft.' };
 
-      // Boss units: +30% HP tankiness, steady ATK
-      const unitHp = Math.round((targetCpPerUnit * 0.6) * 1.3);
-      const unitAtk = Math.round((targetCpPerUnit * 0.4) / 1.5 * 0.85);
+      // Boss units: 75% HP tankiness, 25% ATK
+      const unitHp = Math.round(targetCpPerUnit * 0.75);
+      const unitAtk = Math.max(20, Math.round((targetCpPerUnit * 0.25) / 1.5));
 
       const itemsForUnit: AutoChessItem[] = [];
       if (i === 0 && bossBelt) itemsForUnit.push(bossBelt);
@@ -371,9 +366,10 @@ const generateEnemySquad = (
     };
   }
 
-  // 4. Option B: Satz-Mini-Boss (Triggered at Wave 4)
-  if (isMiniBoss || (wave === 4 && !isBoss)) {
-    const archetype = MINI_BOSS_ARCHETYPES[(round - 1) % MINI_BOSS_ARCHETYPES.length] || MINI_BOSS_ARCHETYPES[0];
+  // 4. Option B: Satz-Mini-Boss (Triggered every 3 waves)
+  if (isMiniBossEffective) {
+    const archetypeIndex = Math.max(0, Math.floor((wave - 3) / 3)) % MINI_BOSS_ARCHETYPES.length;
+    const archetype = MINI_BOSS_ARCHETYPES[archetypeIndex] || MINI_BOSS_ARCHETYPES[0];
     const miniBossItem = AUTO_CHESS_ITEMS.find(it => it.id === archetype.itemId) || AUTO_CHESS_ITEMS[2];
 
     const targetCpPerUnit = Math.round(targetCp / 2);
@@ -384,9 +380,10 @@ const generateEnemySquad = (
       category: archetype.category,
       equipmentType: archetype.equipmentType,
       stars: 2,
-      atk: Math.max(28, Math.round((targetCpPerUnit * 0.45) / 1.5 * archetype.bonusAtkMult)),
-      hp: Math.max(75, Math.round((targetCpPerUnit * 0.55) * archetype.bonusHpMult)),
-      maxHp: Math.max(75, Math.round((targetCpPerUnit * 0.55) * archetype.bonusHpMult)),
+      // Fair stat split: Tanky HP pool (74%), controlled ATK (26%)
+      atk: Math.max(22, Math.round((targetCpPerUnit * 0.26) / 1.5 * archetype.bonusAtkMult)),
+      hp: Math.max(85, Math.round((targetCpPerUnit * 0.74) * archetype.bonusHpMult)),
+      maxHp: Math.max(85, Math.round((targetCpPerUnit * 0.74) * archetype.bonusHpMult)),
       cost: 4,
       powerScore: 4,
       maxWeight: 120,
@@ -406,9 +403,9 @@ const generateEnemySquad = (
       equipmentType: minionCard?.equipmentType || 'Hantel',
       imageUri: minionCard?.imageUri,
       stars: 1,
-      atk: Math.max(20, Math.round((targetCpPerUnit * 0.35) / 1.5)),
-      hp: Math.max(50, Math.round(targetCpPerUnit * 0.45)),
-      maxHp: Math.max(50, Math.round(targetCpPerUnit * 0.45)),
+      atk: Math.max(16, Math.round((targetCpPerUnit * 0.24) / 1.5)),
+      hp: Math.max(50, Math.round(targetCpPerUnit * 0.65)),
+      maxHp: Math.max(50, Math.round(targetCpPerUnit * 0.65)),
       cost: 2,
       powerScore: 2,
       maxWeight: 40,
@@ -425,7 +422,7 @@ const generateEnemySquad = (
       units: [miniBossUnit, minionUnit],
       isBoss: false,
       isMiniBoss: true,
-      bossSubtitle: archetype.subtitle
+      bossSubtitle: `Welle ${wave} • ${archetype.subtitle}`
     };
   }
 
@@ -437,7 +434,8 @@ const generateEnemySquad = (
   const namePool = wave === 1 ? enemyNamesWave1 : wave === 2 ? enemyNamesWave2 : enemyNamesWave3;
   const name = namePool[Math.floor(Math.random() * namePool.length)];
 
-  const unitCount = Math.max(1, Math.min(4, Math.max(playerUnits.length || 2, Math.floor(round / 2) + 1)));
+  // Fair unit count: enemy squad never outnumbers the player's active units on standard waves!
+  const unitCount = Math.max(1, Math.min(4, Math.max(1, playerUnits.length || 1)));
   const targetCpPerUnit = Math.round(targetCp / unitCount);
   const units: AutoChessUnit[] = [];
 
@@ -450,7 +448,7 @@ const generateEnemySquad = (
       rank: 'Bronze' as const,
       cost: 1,
       powerScore: 1,
-      baseAtk: 35,
+      baseAtk: 24,
       baseHp: 90,
       maxWeight: 25,
       totalSets: 8,
@@ -458,11 +456,12 @@ const generateEnemySquad = (
       traitDesc: 'Standard'
     };
 
-    const enemyStars: 1 | 2 | 3 = (wave >= 3 || (round >= 6 && i === 0)) ? 2 : 1;
-    const mult = getMultiplierForStars(enemyStars);
+    const enemyStars: 1 | 2 | 3 = (wave >= 4 || (round >= 8 && i === 0)) ? 2 : 1;
 
-    const unitHp = Math.round((targetCpPerUnit * 0.55));
-    const unitAtk = Math.round((targetCpPerUnit * 0.45) / 1.5);
+    // Fair stat split: 72% HP, 28% ATK directly based on targetCpPerUnit
+    // NOTE: Removed previous bug where stats were multiplied a second time by 'mult * 1.6'
+    const unitHp = Math.round(targetCpPerUnit * 0.72);
+    const unitAtk = Math.round((targetCpPerUnit * 0.28) / 1.5);
 
     // Dynamic Enemy Item Assignment:
     // Wave 3+: 1st unit has 1 Common/Rare item
@@ -482,9 +481,9 @@ const generateEnemySquad = (
       equipmentType: card.equipmentType,
       imageUri: card.imageUri,
       stars: enemyStars,
-      atk: Math.max(20, Math.round(unitAtk * mult * 0.95)),
-      hp: Math.max(50, Math.round(unitHp * mult * 0.95)),
-      maxHp: Math.max(50, Math.round(unitHp * mult * 0.95)),
+      atk: Math.max(16, unitAtk),
+      hp: Math.max(55, unitHp),
+      maxHp: Math.max(55, unitHp),
       cost: card.cost,
       powerScore: card.powerScore || card.cost,
       maxWeight: card.maxWeight,
@@ -514,6 +513,8 @@ export const useAutoChessStore = create<AutoChessState>()(
       trophyMilestonesClaimed: [],
 
       // Ephemeral session states
+      isBoardDragging: false,
+      setIsBoardDragging: (isBoardDragging: boolean) => set({ isBoardDragging }),
       coins: 0,
       round: 1,
       currentWaveInPause: 1,
@@ -567,7 +568,7 @@ export const useAutoChessStore = create<AutoChessState>()(
         // 1. Gather all exercises:
         // Rule: ALWAYS include ALL user-created customExercises
         // Standard exercises ONLY from active workout or active programs/plans
-        const exerciseMap = new Map<string, { name: string; equipmentType: string; imageUri?: string }>();
+        const exerciseMap = new Map<string, { name: string; category?: string; targetMuscle?: string; equipmentType: string; imageUri?: string }>();
 
         // Store active workout exercises for Option A Shadow Titan
         const activeList: Array<{ name: string; equipmentType?: string; imageUri?: string }> = [];
@@ -579,6 +580,8 @@ export const useAutoChessStore = create<AutoChessState>()(
             if (!exerciseMap.has(key)) {
               exerciseMap.set(key, {
                 name: c.name.trim(),
+                category: c.category,
+                targetMuscle: c.targetMuscle,
                 equipmentType: c.equipmentType || 'Freie Übung',
                 imageUri: resolveImage(c.name, c.imageUri)
               });
@@ -595,6 +598,8 @@ export const useAutoChessStore = create<AutoChessState>()(
             if (!exerciseMap.has(key)) {
               exerciseMap.set(key, {
                 name: ex.name.trim(),
+                category: (ex as any).category,
+                targetMuscle: (ex as any).targetMuscle,
                 equipmentType: ex.equipmentType || 'Freie Übung',
                 imageUri: img
               });
@@ -613,6 +618,8 @@ export const useAutoChessStore = create<AutoChessState>()(
                   if (!exerciseMap.has(key)) {
                     exerciseMap.set(key, {
                       name: ex.name.trim(),
+                      category: (ex as any).category,
+                      targetMuscle: (ex as any).targetMuscle,
                       equipmentType: 'Freie Übung',
                       imageUri: resolveImage(ex.name, (ex as any).imageUri)
                     });
@@ -631,6 +638,8 @@ export const useAutoChessStore = create<AutoChessState>()(
                 if (!exerciseMap.has(key)) {
                   exerciseMap.set(key, {
                     name: ex.name.trim(),
+                    category: (ex as any).category,
+                    targetMuscle: (ex as any).targetMuscle,
                     equipmentType: 'Freie Übung',
                     imageUri: resolveImage(ex.name, (ex as any).imageUri)
                   });
@@ -645,17 +654,21 @@ export const useAutoChessStore = create<AutoChessState>()(
           PRELOADED_EXERCISES.slice(0, 3).forEach(p => {
             exerciseMap.set(p.name.toLowerCase().trim(), {
               name: p.name,
+              category: p.category,
+              targetMuscle: p.targetMuscle,
               equipmentType: p.equipmentType || 'Freie Übung',
               imageUri: resolveImage(p.name, (p as any).imageUri)
             });
           });
         }
 
-        // Convert map to AutoChessCardData pool
+        // Convert map to AutoChessCardData pool using exact categories from exercise library
         const pool: AutoChessCardData[] = [];
-        exerciseMap.forEach(({ name, equipmentType, imageUri }) => {
-          const category = getExerciseCategory(name);
-          const card = buildCardData(name, category, equipmentType, history || [], imageUri);
+        exerciseMap.forEach(({ name, category: explicitCat, targetMuscle, equipmentType, imageUri }) => {
+          const muscleInfo = resolveExerciseMuscleInfo(name, customExercises);
+          const category = (explicitCat && normalizeMuscleCategory(explicitCat)) || muscleInfo.majorGroup;
+          const finalTarget = targetMuscle || muscleInfo.targetMuscle;
+          const card = buildCardData(name, category, equipmentType, history || [], imageUri, finalTarget);
           pool.push(card);
         });
 
@@ -713,8 +726,34 @@ export const useAutoChessStore = create<AutoChessState>()(
       },
 
       setBossAvailable: (isBossAvailable: boolean) => {
-        const { isBossDefeated } = get();
-        set({ isBossAvailable: isBossAvailable && !isBossDefeated });
+        const { 
+          isBossDefeated, 
+          enemySquad, 
+          round, 
+          currentWaveInPause, 
+          pool, 
+          board, 
+          activeWaveBonusStacks, 
+          activeWorkoutExercises 
+        } = get();
+
+        if (!isBossAvailable && enemySquad?.isBoss && !isBossDefeated) {
+          // Restore regular wave enemy when last set was unchecked
+          const activeUnits = board.filter((u): u is AutoChessUnit => u !== null && u.hp > 0);
+          const persistentWave = Math.max(1, currentWaveInPause);
+          const normalEnemy = generateEnemySquad(
+            round,
+            persistentWave,
+            pool,
+            activeUnits,
+            activeWaveBonusStacks,
+            false,
+            activeWorkoutExercises
+          );
+          set({ isBossAvailable: false, enemySquad: normalEnemy });
+        } else {
+          set({ isBossAvailable: isBossAvailable && !isBossDefeated });
+        }
       },
 
       // Called when user logs a gym set: Reps = Coins, Heals units, Activates pending wave stacks!
@@ -727,6 +766,7 @@ export const useAutoChessStore = create<AutoChessState>()(
           round, 
           board, 
           bench, 
+          currentWaveInPause,
           pendingWaveBonusStacks,
           activeWorkoutExercises,
           isBossDefeated,
@@ -746,25 +786,40 @@ export const useAutoChessStore = create<AutoChessState>()(
         // 3. Roll new shop if not locked
         const nextShop = isShopLocked ? get().shop : rollShopCards(pool, 3);
 
-        // 4. Wave 1 enemy squad for the new pause
+        // 4. Wave progression: Keep wave persistent across gym sets until the Shadow Titan Castle!
+        // If last set of workout, spawn ONLY the Shadow Titan boss directly
+        const persistentWave = Math.max(1, currentWaveInPause);
+        const shouldSpawnBoss = isLastSetOfWorkout && !isBossDefeated;
+        const isMiniBoss = !shouldSpawnBoss && isMiniBossWave(persistentWave);
         const activeUnits = healedBoard.filter((u): u is AutoChessUnit => u !== null && u.hp > 0);
 
-        const nextEnemy = generateEnemySquad(
-          newRound,
-          1,
-          pool,
-          activeUnits,
-          activatedBonus,
-          false,
-          activeWorkoutExercises
-        );
+        const nextEnemy = shouldSpawnBoss
+          ? generateEnemySquad(
+              newRound,
+              persistentWave,
+              pool,
+              activeUnits,
+              activatedBonus,
+              true, // Direct Shadow Titan encounter in the castle!
+              activeWorkoutExercises
+            )
+          : generateEnemySquad(
+              newRound,
+              persistentWave,
+              pool,
+              activeUnits,
+              activatedBonus,
+              false,
+              activeWorkoutExercises,
+              isMiniBoss
+            );
 
         const nextShopItem = isShopLocked ? get().shopItem : rollShopItem();
 
         set({
           coins: newCoins,
           round: newRound,
-          currentWaveInPause: 1,
+          currentWaveInPause: persistentWave,
           pendingWaveBonusStacks: 0,
           activeWaveBonusStacks: activatedBonus,
           shop: nextShop,
@@ -775,7 +830,7 @@ export const useAutoChessStore = create<AutoChessState>()(
           enemySquad: nextEnemy,
           combatState: 'idle',
           combatLog: [],
-          isBossAvailable: isLastSetOfWorkout && !isBossDefeated,
+          isBossAvailable: shouldSpawnBoss,
           sessionStats: {
             ...sessionStats,
             totalCoinsEarned: sessionStats.totalCoinsEarned + coinsAwarded
@@ -1029,6 +1084,46 @@ export const useAutoChessStore = create<AutoChessState>()(
         }
       },
 
+      useConsumableItem: (itemId: string, targetInstanceId: string) => {
+        const { itemInventory, board, bench } = get();
+        const itemIdx = itemInventory.findIndex(it => it.id === itemId);
+        if (itemIdx === -1) return false;
+        const item = itemInventory[itemIdx];
+
+        let consumed = false;
+        const nextBoard = board.map(u => {
+          if (u && u.instanceId === targetInstanceId) {
+            consumed = true;
+            // revive_salts: 100% full recovery; trauma_ice_pack: 50% recovery
+            const healAmt = item.id === 'revive_salts' ? u.maxHp : Math.max(1, Math.round(u.maxHp * 0.50));
+            const baseHp = (typeof u.hp === 'number' && u.hp > 0) ? u.hp : 0;
+            const newHp = Math.min(u.maxHp, baseHp + healAmt);
+            return { ...u, hp: newHp };
+          }
+          return u;
+        });
+
+        const nextBench = bench.map(u => {
+          if (u && u.instanceId === targetInstanceId) {
+            consumed = true;
+            const healAmt = item.id === 'revive_salts' ? u.maxHp : Math.max(1, Math.round(u.maxHp * 0.50));
+            const baseHp = (typeof u.hp === 'number' && u.hp > 0) ? u.hp : 0;
+            const newHp = Math.min(u.maxHp, baseHp + healAmt);
+            return { ...u, hp: newHp };
+          }
+          return u;
+        });
+
+        if (consumed) {
+          const nextInventory = [...itemInventory];
+          nextInventory.splice(itemIdx, 1);
+          set({ board: nextBoard, bench: nextBench, itemInventory: nextInventory });
+          Vibration.vibrate([0, 50, 40, 80]);
+          return true;
+        }
+        return false;
+      },
+
       claimLootDrop: () => {
         const { currentLootDrop, itemInventory } = get();
         if (!currentLootDrop) return;
@@ -1105,8 +1200,11 @@ export const useAutoChessStore = create<AutoChessState>()(
         if (!unit) return;
 
         if (to === 'board') {
-          const destIndex = targetSlotIndex !== undefined ? targetSlotIndex : board.findIndex(s => s === null);
-          if (destIndex === -1) return;
+          let destIndex = targetSlotIndex !== undefined ? targetSlotIndex : board.findIndex(s => s === null);
+          // If destination is full and no specific slot targeted, swap with slot 0 (1:1 swap)
+          if (destIndex === -1) {
+            destIndex = 0;
+          }
 
           const nextBoard = [...board];
           const nextBench = [...bench];
@@ -1121,8 +1219,11 @@ export const useAutoChessStore = create<AutoChessState>()(
           }
           set({ board: nextBoard, bench: nextBench });
         } else {
-          const destIndex = targetSlotIndex !== undefined ? targetSlotIndex : bench.findIndex(s => s === null);
-          if (destIndex === -1) return;
+          let destIndex = targetSlotIndex !== undefined ? targetSlotIndex : bench.findIndex(s => s === null);
+          // If destination bench is full and no specific slot targeted, swap with slot 0 (1:1 swap)
+          if (destIndex === -1) {
+            destIndex = 0;
+          }
 
           const nextBoard = [...board];
           const nextBench = [...bench];
@@ -1150,6 +1251,42 @@ export const useAutoChessStore = create<AutoChessState>()(
         set({ board: nextBoard });
       },
 
+      swapUnits: (fromLocation: 'board' | 'bench', fromIndex: number, toLocation: 'board' | 'bench', toIndex: number) => {
+        const { board, bench, maxBoardSlots } = get();
+        if (fromLocation === 'board' && (fromIndex < 0 || fromIndex >= board.length)) return;
+        if (fromLocation === 'bench' && (fromIndex < 0 || fromIndex >= bench.length)) return;
+        if (toLocation === 'board' && (toIndex < 0 || toIndex >= maxBoardSlots)) return;
+        if (toLocation === 'bench' && (toIndex < 0 || toIndex >= bench.length)) return;
+
+        const nextBoard = [...board];
+        const nextBench = [...bench];
+
+        if (fromLocation === 'board' && toLocation === 'board') {
+          if (fromIndex === toIndex) return;
+          const temp = nextBoard[fromIndex];
+          nextBoard[fromIndex] = nextBoard[toIndex] ?? null;
+          nextBoard[toIndex] = temp;
+          set({ board: nextBoard });
+        } else if (fromLocation === 'bench' && toLocation === 'bench') {
+          if (fromIndex === toIndex) return;
+          const temp = nextBench[fromIndex];
+          nextBench[fromIndex] = nextBench[toIndex] ?? null;
+          nextBench[toIndex] = temp;
+          set({ bench: nextBench });
+        } else if (fromLocation === 'board' && toLocation === 'bench') {
+          const temp = nextBoard[fromIndex];
+          nextBoard[fromIndex] = nextBench[toIndex] ?? null;
+          nextBench[toIndex] = temp;
+          set({ board: nextBoard, bench: nextBench });
+        } else if (fromLocation === 'bench' && toLocation === 'board') {
+          const temp = nextBench[fromIndex];
+          nextBench[fromIndex] = nextBoard[toIndex] ?? null;
+          nextBoard[toIndex] = temp;
+          set({ board: nextBoard, bench: nextBench });
+        }
+        Vibration.vibrate(35);
+      },
+
       // Saves reduced HP across waves during the same pause
       saveBoardUnitHps: (hps: Record<string, number>) => {
         set(state => ({
@@ -1167,10 +1304,10 @@ export const useAutoChessStore = create<AutoChessState>()(
         }));
       },
 
-      // Awards trophies (0 regular, +25 boss) and win bounty (+3 coins, +5 miniboss), increments pending stacks
+      // Awards trophies (+25 boss, +12 miniboss, 0 regular) and win bounty (+5 coins, +8 miniboss, +10 boss), increments pending stacks
       recordWaveVictory: (isBoss = false, isMiniBoss = false) => {
-        const trophiesGained = isBoss ? 25 : 0;
-        const coinsGained = isMiniBoss ? 5 : 3;
+        const trophiesGained = isBoss ? 25 : isMiniBoss ? 12 : 0;
+        const coinsGained = isBoss ? 10 : isMiniBoss ? 8 : 5;
         let droppedItem: AutoChessItem | null = null;
         if (isMiniBoss) {
           droppedItem = rollMiniBossLoot(get().round);
@@ -1190,6 +1327,22 @@ export const useAutoChessStore = create<AutoChessState>()(
         return { trophiesGained, coinsGained, droppedItem };
       },
 
+      // Defeat: Consolation coins (4 coins, up from 2), -6 trophies on Mini-Boss loss
+      recordWaveDefeat: (isMiniBoss = false) => {
+        const coinsGained = 4; // Trost-Münzen (erlaubt Kauf einer Karte im Shop)
+        const trophiesLost = isMiniBoss ? 6 : 0;
+        set(state => ({
+          coins: state.coins + coinsGained,
+          trophies: Math.max(0, state.trophies - trophiesLost),
+          sessionStats: {
+            ...state.sessionStats,
+            losses: state.sessionStats.losses + 1,
+            totalCoinsEarned: state.sessionStats.totalCoinsEarned + coinsGained,
+          },
+        }));
+        return { coinsGained, trophiesLost };
+      },
+
       // Spawns the next wave in the current rest pause with surviving HP
       spawnNextWave: () => {
         const { 
@@ -1202,7 +1355,7 @@ export const useAutoChessStore = create<AutoChessState>()(
         } = get();
         const nextWave = currentWaveInPause + 1;
         const activeUnits = board.filter((u): u is AutoChessUnit => u !== null && u.hp > 0);
-        const isMiniBoss = nextWave === 4;
+        const isMiniBoss = isMiniBossWave(nextWave);
 
         const nextEnemy = generateEnemySquad(
           round,
@@ -1300,15 +1453,18 @@ export const useAutoChessStore = create<AutoChessState>()(
         const norm = exercise.name.toLowerCase().trim();
         const existsInPool = pool.some(c => c.exerciseName.toLowerCase().trim() === norm);
         let nextPool = pool;
+        const customExercises = useAppStore.getState().customExercises || [];
         if (!existsInPool) {
-          const category = getExerciseCategory(exercise.name);
+          const muscleInfo = resolveExerciseMuscleInfo(exercise.name, customExercises);
+          const category = ((exercise as any).category && normalizeMuscleCategory((exercise as any).category)) || muscleInfo.majorGroup;
           const history = useAppStore.getState().workoutHistory || [];
           const newCard = buildCardData(
             exercise.name,
             category,
             exercise.equipmentType || 'Freie Übung',
             history,
-            exercise.imageUri
+            exercise.imageUri,
+            (exercise as any).targetMuscle || muscleInfo.targetMuscle
           );
           nextPool = [...pool, newCard];
         }

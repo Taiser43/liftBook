@@ -5,6 +5,7 @@ import { useAppStore } from '../store/store';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { getLevelData } from '../utils/gamification';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getAppTheme } from '../utils/theme';
 
 const { width, height } = Dimensions.get('window');
 
@@ -65,6 +66,8 @@ const XPParticle = ({ id, startX, startY, amount, targetY, onComplete }: any) =>
 export const GlobalXPOverlay = () => {
   const xpEvent = useAppStore(state => state.xpEvent);
   const totalXP = useAppStore(state => state.totalXP) || 0;
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const insets = useSafeAreaInsets();
   const [particles, setParticles] = useState<any[]>([]);
   
@@ -111,7 +114,7 @@ export const GlobalXPOverlay = () => {
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
       {bannerVisible && (
-        <Animated.View style={[styles.banner, bannerStyle]}>
+        <Animated.View style={[styles.banner, { backgroundColor: theme.cardBg || '#1E1E20', borderColor: theme.cardBorder || '#333', shadowColor: theme.accent || '#000' }, bannerStyle]}>
           <View style={styles.bannerRow}>
             <View style={[styles.badge, { borderColor: levelData.rankColor }]}>
               <MaterialCommunityIcons name="shield-star" size={24} color={levelData.rankColor} />

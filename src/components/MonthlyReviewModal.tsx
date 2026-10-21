@@ -14,6 +14,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 import {
   calculateMonthlyReview,
   getAvailableMonths,
@@ -32,6 +33,8 @@ interface Props {
 
 export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialMonth }) => {
   const insets = useSafeAreaInsets();
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
 
   const {
     workoutHistory,
@@ -126,16 +129,16 @@ export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialM
         {/* ── TOP HEADER BAR ────────────────────────────────────── */}
         <View style={styles.headerBar}>
           <TouchableOpacity
-            style={styles.monthSelectorBtn}
+            style={[styles.monthSelectorBtn, { borderColor: `${theme.accent}50` }]}
             activeOpacity={0.8}
             onPress={() => setMonthPickerOpen(!monthPickerOpen)}
           >
-            <MaterialCommunityIcons name="calendar-month" size={18} color="#00D2FF" style={{ marginRight: 6 }} />
-            <Text style={styles.monthSelectorText}>{review.monthLabel}</Text>
+            <MaterialCommunityIcons name="calendar-month" size={18} color={theme.accent} style={{ marginRight: 6 }} />
+            <Text style={[styles.monthSelectorText, { color: theme.accent }]}>{review.monthLabel}</Text>
             <MaterialCommunityIcons
               name={monthPickerOpen ? 'chevron-up' : 'chevron-down'}
               size={18}
-              color="#00D2FF"
+              color={theme.accent}
             />
           </TouchableOpacity>
 
@@ -143,7 +146,7 @@ export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialM
             {/* Mode Switch Tabs */}
             <View style={styles.modeTabs}>
               <TouchableOpacity
-                style={[styles.modeTab, viewMode === 'story' && styles.modeTabActive]}
+                style={[styles.modeTab, viewMode === 'story' && [styles.modeTabActive, { backgroundColor: theme.accent }]]}
                 onPress={() => { setViewMode('story'); triggerLight(); }}
               >
                 <MaterialCommunityIcons
@@ -187,20 +190,20 @@ export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialM
                 return (
                   <TouchableOpacity
                     key={mKey}
-                    style={[styles.dropdownItem, isSelected && styles.dropdownItemActive]}
+                    style={[styles.dropdownItem, isSelected && [styles.dropdownItemActive, { borderColor: theme.accent, backgroundColor: `${theme.accent}15` }]]}
                     onPress={() => handleSelectMonth(mKey)}
                   >
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextActive]}>
+                      <Text style={[styles.dropdownItemText, isSelected && [styles.dropdownItemTextActive, { color: theme.accent }]]}>
                         {formatMonthLabel(mKey)}
                       </Text>
                       {isPastFlawless && (
-                        <View style={styles.flawlessPillMini}>
-                          <Text style={styles.flawlessPillMiniText}>💎 Makellos</Text>
+                        <View style={[styles.flawlessPillMini, { backgroundColor: `${theme.accent}25` }]}>
+                          <Text style={[styles.flawlessPillMiniText, { color: theme.accent }]}>💎 Makellos</Text>
                         </View>
                       )}
                     </View>
-                    {isSelected && <MaterialCommunityIcons name="check" size={16} color="#00D2FF" />}
+                    {isSelected && <MaterialCommunityIcons name="check" size={16} color={theme.accent} />}
                   </TouchableOpacity>
                 );
               })}
@@ -218,7 +221,10 @@ export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialM
                   <View
                     style={[
                       styles.storyBarFill,
-                      { width: idx < currentSlide ? '100%' : idx === currentSlide ? '100%' : '0%' }
+                      {
+                        backgroundColor: theme.accent,
+                        width: idx < currentSlide ? '100%' : idx === currentSlide ? '100%' : '0%'
+                      }
                     ]}
                   />
                 </View>
@@ -227,7 +233,7 @@ export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialM
 
             {/* Slide Sub-Header */}
             <View style={styles.slideHeader}>
-              <Text style={styles.slideMonthLabel}>{review.monthLabel.toUpperCase()}</Text>
+              <Text style={[styles.slideMonthLabel, { color: theme.accent }]}>{review.monthLabel.toUpperCase()}</Text>
               <Text style={styles.slideIndexText}>{currentSlide + 1} / 5</Text>
             </View>
 
@@ -268,10 +274,10 @@ export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialM
                   </View>
 
                   {review.isFlawless && (
-                    <View style={styles.flawlessBanner}>
+                    <View style={[styles.flawlessBanner, { backgroundColor: `${theme.accent}15`, borderColor: theme.accent }]}>
                       <Text style={styles.flawlessBannerEmoji}>💎</Text>
                       <View style={{ flex: 1, marginLeft: 8 }}>
-                        <Text style={styles.flawlessBannerTitle}>MAKELLOSER MONAT (100%)!</Text>
+                        <Text style={[styles.flawlessBannerTitle, { color: theme.accent }]}>MAKELLOSER MONAT (100%)!</Text>
                         <Text style={styles.flawlessBannerDesc}>
                           Dauerhaft als Prestige-Siegel in deinem Spielerprofil gesichert!
                         </Text>
@@ -374,10 +380,10 @@ export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialM
               {/* SLIDE 3: Bodyweight & Favorite Exercise */}
               {currentSlide === 3 && (
                 <View style={styles.slideInner}>
-                  <View style={[styles.heroIconCircle, { backgroundColor: '#00D2FF20', borderColor: '#00D2FF60' }]}>
-                    <MaterialCommunityIcons name="scale-bathroom" size={44} color="#00D2FF" />
+                  <View style={[styles.heroIconCircle, { backgroundColor: `${theme.accent}20`, borderColor: `${theme.accent}60` }]}>
+                    <MaterialCommunityIcons name="scale-bathroom" size={44} color={theme.accent} />
                   </View>
-                  <Text style={[styles.slideCategoryTag, { color: '#00D2FF' }]}>KÖRPER-TRANSFORMATION</Text>
+                  <Text style={[styles.slideCategoryTag, { color: theme.accent }]}>KÖRPER-TRANSFORMATION</Text>
                   <Text style={styles.slideBigTitle}>
                     {review.weightDeltaKg !== null
                       ? `${review.weightDeltaKg > 0 ? `+${review.weightDeltaKg}` : review.weightDeltaKg} kg`
@@ -441,7 +447,7 @@ export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialM
                   </View>
 
                   <TouchableOpacity
-                    style={styles.toDashboardBtn}
+                    style={[styles.toDashboardBtn, { backgroundColor: theme.accent }]}
                     onPress={() => { triggerSuccess(); setViewMode('dashboard'); }}
                   >
                     <MaterialCommunityIcons name="table-large" size={18} color="#000" style={{ marginRight: 6 }} />
@@ -462,7 +468,7 @@ export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialM
                 <Text style={styles.storyCtrlBtnText}>Zurück</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.storyNextBtn} onPress={handleNextSlide}>
+              <TouchableOpacity style={[styles.storyNextBtn, { backgroundColor: theme.accent }]} onPress={handleNextSlide}>
                 <Text style={styles.storyNextBtnText}>
                   {currentSlide < 4 ? 'Weiter' : 'Zur Übersicht ➔'}
                 </Text>
@@ -487,7 +493,7 @@ export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialM
 
               <View style={styles.dashMetricCard}>
                 <Text style={styles.dashMetricLabel}>GEWICHTS-DELTA</Text>
-                <Text style={[styles.dashMetricVal, { color: '#00D2FF' }]}>
+                <Text style={[styles.dashMetricVal, { color: theme.accent }]}>
                   {review.weightDeltaKg !== null
                     ? `${review.weightDeltaKg > 0 ? '+' : ''}${review.weightDeltaKg} kg`
                     : '--'}
@@ -509,7 +515,7 @@ export const MonthlyReviewModal: React.FC<Props> = ({ visible, onClose, initialM
                 <Text style={styles.dashMetricLabel}>MONATS-STATUS</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
                   <Text style={{ fontSize: 18, marginRight: 4 }}>{review.isFlawless ? '💎' : '⚡'}</Text>
-                  <Text style={[styles.dashMetricVal, { fontSize: 14, color: review.isFlawless ? '#00D2FF' : '#FF9500' }]}>
+                  <Text style={[styles.dashMetricVal, { fontSize: 14, color: review.isFlawless ? theme.accent : '#FF9500' }]}>
                     {review.isFlawless ? 'Makellos!' : `${review.totalWorkouts} Workouts`}
                   </Text>
                 </View>

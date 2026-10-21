@@ -23,6 +23,7 @@ import {
 } from '../store/useCheckInStore';
 import { useAppStore, getLocalDateString } from '../store/store';
 import { evaluateCheckIn, getSevenDayWeightStats } from '../utils/checkInEngine';
+import { getAppTheme } from '../utils/theme';
 import BeforeAfterSlider from './BeforeAfterSlider';
 import CheckInReportModal from './CheckInReportModal';
 
@@ -34,6 +35,8 @@ interface Props {
 export default function CheckInModal({ visible, onClose }: Props) {
   const insets = useSafeAreaInsets();
   const today = getLocalDateString();
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
 
   const {
     phaseConfig,
@@ -294,14 +297,14 @@ export default function CheckInModal({ visible, onClose }: Props) {
                       }}
                       style={[
                         styles.weekPill,
-                        isCurrent && styles.weekPillCurrent,
+                        isCurrent && { borderColor: theme.accent || '#00D2FF', backgroundColor: theme.accentSoftBg || 'rgba(0, 210, 255, 0.15)' },
                         isDone && styles.weekPillDone,
                       ]}
                     >
                       <Text
                         style={[
                           styles.weekPillNum,
-                          isCurrent && { color: '#00D2FF', fontWeight: '800' },
+                          isCurrent && { color: theme.accent || '#00D2FF', fontWeight: '800' },
                         ]}
                       >
                         W{week}
@@ -343,20 +346,20 @@ export default function CheckInModal({ visible, onClose }: Props) {
                   </TouchableOpacity>
                 </View>
               ) : (
-                <View style={styles.pendingCard}>
+                <View style={[styles.pendingCard, { backgroundColor: theme.cardBg || '#161920', borderColor: theme.accentBorder || '#00D2FF55' }]}>
                   <View style={styles.pendingHeader}>
                     <View>
                       <View style={styles.pendingTag}>
-                        <View style={styles.pulseDot} />
-                        <Text style={styles.pendingTagText}>CHECK-IN BEREIT</Text>
+                        <View style={[styles.pulseDot, { backgroundColor: theme.accent || '#00D2FF' }]} />
+                        <Text style={[styles.pendingTagText, { color: theme.accent || '#00D2FF' }]}>CHECK-IN BEREIT</Text>
                       </View>
                       <Text style={styles.pendingTitle}>Woche {currentWeekNum} Check-In</Text>
                       <Text style={styles.pendingSub}>
                         {getDayName(phaseConfig.checkInDayOfWeek)} Routine • Fotos & Feedback
                       </Text>
                     </View>
-                    <View style={styles.cameraIconBox}>
-                      <MaterialCommunityIcons name="camera" size={24} color="#00D2FF" />
+                    <View style={[styles.cameraIconBox, { backgroundColor: theme.accentSoftBg || 'rgba(0, 210, 255, 0.15)' }]}>
+                      <MaterialCommunityIcons name="camera" size={24} color={theme.accent || "#00D2FF"} />
                     </View>
                   </View>
 
@@ -380,7 +383,7 @@ export default function CheckInModal({ visible, onClose }: Props) {
                   </View>
 
                   <TouchableOpacity
-                    style={styles.startFlowBtn}
+                    style={[styles.startFlowBtn, { backgroundColor: theme.accent || '#00D2FF' }]}
                     onPress={() => {
                       setCurrentMode('flow');
                       setFlowStep(1);
@@ -473,7 +476,7 @@ export default function CheckInModal({ visible, onClose }: Props) {
                   key={s}
                   style={[
                     styles.stepperSegment,
-                    s <= flowStep && styles.stepperSegmentActive,
+                    s <= flowStep && { backgroundColor: theme.accent || '#00D2FF' },
                   ]}
                 />
               ))}
@@ -574,7 +577,7 @@ export default function CheckInModal({ visible, onClose }: Props) {
                   </View>
 
                   <TouchableOpacity
-                    style={styles.nextStepBtn}
+                    style={[styles.nextStepBtn, { backgroundColor: theme.accent || '#00D2FF' }]}
                     onPress={() => setFlowStep(2)}
                   >
                     <Text style={styles.nextStepBtnText}>Weiter zu Schritt 2: Fotos →</Text>
@@ -639,7 +642,7 @@ export default function CheckInModal({ visible, onClose }: Props) {
                   </View>
 
                   <TouchableOpacity
-                    style={styles.nextStepBtn}
+                    style={[styles.nextStepBtn, { backgroundColor: theme.accent || '#00D2FF' }]}
                     onPress={() => setFlowStep(3)}
                   >
                     <Text style={styles.nextStepBtnText}>Weiter zu Schritt 3: Befinden →</Text>
@@ -785,7 +788,7 @@ export default function CheckInModal({ visible, onClose }: Props) {
                   </View>
 
                   <TouchableOpacity
-                    style={styles.nextStepBtn}
+                    style={[styles.nextStepBtn, { backgroundColor: theme.accent || '#00D2FF' }]}
                     onPress={() => setFlowStep(4)}
                   >
                     <Text style={styles.nextStepBtnText}>Weiter zu Schritt 4: Notizen →</Text>
@@ -968,7 +971,7 @@ export default function CheckInModal({ visible, onClose }: Props) {
                 </View>
               </View>
 
-              <TouchableOpacity style={styles.saveSetupBtn} onPress={savePhaseSetup}>
+              <TouchableOpacity style={[styles.saveSetupBtn, { backgroundColor: theme.accent || '#00D2FF' }]} onPress={savePhaseSetup}>
                 <Text style={styles.saveSetupBtnText}>Phase speichern & anwenden ✓</Text>
               </TouchableOpacity>
             </ScrollView>

@@ -11,6 +11,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { CheckInEntry, useCheckInStore } from '../store/useCheckInStore';
 import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface Props {
@@ -21,6 +22,8 @@ interface Props {
 
 export default function CheckInReportModal({ visible, entry, onClose }: Props) {
   const insets = useSafeAreaInsets();
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const { markRecommendationApplied } = useCheckInStore();
   const { targets, setTargets, dietPlans, updateDietPlan } = useAppStore();
 
@@ -38,7 +41,7 @@ export default function CheckInReportModal({ visible, entry, onClose }: Props) {
       case 'alert':
         return '#FF453A';
       default:
-        return '#00D2FF';
+        return theme.accent || '#00D2FF';
     }
   };
 
@@ -114,7 +117,7 @@ export default function CheckInReportModal({ visible, entry, onClose }: Props) {
             <MaterialCommunityIcons name="arrow-left" size={24} color="#FFF" />
           </TouchableOpacity>
           <View style={styles.headerTitleBox}>
-            <Text style={styles.headerSub}>CHECK-IN WOCHE {entry.weekNumber}</Text>
+            <Text style={[styles.headerSub, { color: theme.accent }]}>CHECK-IN WOCHE {entry.weekNumber}</Text>
             <Text style={styles.headerTitle}>Coach Feedback Report</Text>
           </View>
           <View style={{ width: 40 }} />
@@ -152,7 +155,7 @@ export default function CheckInReportModal({ visible, entry, onClose }: Props) {
           <View style={styles.pillarCard}>
             <View style={styles.pillarHeaderRow}>
               <View style={styles.pillarTitleGroup}>
-                <MaterialCommunityIcons name="scale-bathroom" size={20} color="#00D2FF" />
+                <MaterialCommunityIcons name="scale-bathroom" size={20} color={theme.accent} />
                 <Text style={styles.pillarTitle}>1. Gewichtsentwicklung</Text>
               </View>
               <Text
@@ -184,7 +187,7 @@ export default function CheckInReportModal({ visible, entry, onClose }: Props) {
                 <MaterialCommunityIcons name="dumbbell" size={20} color="#00FF88" />
                 <Text style={styles.pillarTitle}>2. Trainingsperformance</Text>
               </View>
-              <Text style={[styles.pillarHighlight, { color: '#00D2FF' }]}>
+              <Text style={[styles.pillarHighlight, { color: theme.accent }]}>
                 {verdict.performanceAnalysis.volumeDeltaPercent >= 0
                   ? `+${verdict.performanceAnalysis.volumeDeltaPercent}%`
                   : `${verdict.performanceAnalysis.volumeDeltaPercent}%`}
@@ -256,8 +259,8 @@ export default function CheckInReportModal({ visible, entry, onClose }: Props) {
           {/* Smart Action Plan (Coach Recommendation) */}
           <View style={[styles.actionPlanCard, { borderColor: statusColor }]}>
             <View style={styles.actionPlanHeader}>
-              <MaterialCommunityIcons name="robot" size={22} color="#00D2FF" />
-              <Text style={styles.actionPlanTitle}>SMART ACTION PLAN</Text>
+              <MaterialCommunityIcons name="robot" size={22} color={theme.accent} />
+              <Text style={[styles.actionPlanTitle, { color: theme.accent }]}>SMART ACTION PLAN</Text>
             </View>
             <Text style={styles.actionPlanDesc}>{rec.explanation}</Text>
 

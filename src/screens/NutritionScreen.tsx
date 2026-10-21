@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { KeyboardAwareScrollView as ScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { 
   View, 
@@ -10,12 +10,14 @@ import {
   Alert,
   Image,
   Keyboard,
-  Platform 
+  Platform,
+  StatusBar,
+  ScrollView as RNScrollView
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { useAppStore, Ingredient, Recipe, RecipeIngredient, LoggedMeal, showCustomAlert } from '../store/store';
+import { useAppStore, Ingredient, Recipe, RecipeIngredient, LoggedMeal, ScheduledMeal, showCustomAlert } from '../store/store';
 import SwipeableModal from '../components/SwipeableModal';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
 import DietPlanManager from '../components/DietPlanManager';
@@ -23,12 +25,15 @@ import MacroProgressBar from '../components/MacroProgressBar';
 import EnhancedRecipeBuilder from '../components/EnhancedRecipeBuilder';
 import ShoppingListModal from '../components/ShoppingListModal';
 import MealAutoBalancerModal from '../components/MealAutoBalancerModal';
+import AiNutritionCoachModal from '../components/AiNutritionCoachModal';
 import { useBottomSpacing } from '../hooks/useBottomSpacing';
 import { triggerSuccess, triggerLight } from '../utils/haptics';
 import { KeyboardAwareWrapper } from '../components/KeyboardAwareWrapper';
 import { BottomSheetWrapper } from '../components/BottomSheetWrapper';
 import { getResolvedUri } from '../utils/uriResolver';
 import { resolveActiveNutritionTargets } from '../utils/dietPlanEngine';
+import { getAppTheme } from '../utils/theme';
+import AccentThemePickerModal from '../components/AccentThemePickerModal';
 
 export default function NutritionScreen() {
   const bottomSpacing = useBottomSpacing();
@@ -57,8 +62,12 @@ export default function NutritionScreen() {
     incrementIngredientUsage,
     nutritionHistory,
     addDailyTargetExtra,
-    dailyTargetExtra
+    dailyTargetExtra,
+    accentThemeId
   } = useAppStore();
+
+  const theme = getAppTheme(accentThemeId);
+  const [themePickerVisible, setThemePickerVisible] = useState(false);
 
   const pickRecipeImage = async (recipe: Recipe) => {
     try {
@@ -181,7 +190,9 @@ export default function NutritionScreen() {
   // Shopping List & Balancer Modals
   const [shoppingListVisible, setShoppingListVisible] = useState(false);
   const [balancerModalVisible, setBalancerModalVisible] = useState(false);
+  const [aiCoachModalVisible, setAiCoachModalVisible] = useState(false);
   const [selectedBalancerTargetId, setSelectedBalancerTargetId] = useState<string | null>(null);
+  const [showBalancerGramRow, setShowBalancerGramRow] = useState(false);
 
   // Remaining Calories & Macros
   const remainingCal = activeTargets.calories - consumedToday.calories;
@@ -199,12 +210,99 @@ export default function NutritionScreen() {
     ).sort((a, b) => a.time.localeCompare(b.time));
   }, [activeDietPlan, todayDayName]);
 
+  interface PlannedMealStatus {
+    scheduledMeal: ScheduledMeal;
+    recipe: Recipe | null;
+    name: string;
+    plannedCal: number;
+    plannedPro: number;
+    plannedCar: number;
+    plannedFat: number;
+    isEaten: boolean;
+    matchedLoggedMealId: string | null;
+    imageUri?: string;
+  }
+
+  const plannedMealsWithStatus = React.useMemo<PlannedMealStatus[]>(() => {
+    if (!todaysPlanMeals || todaysPlanMeals.length === 0) return [];
+
+    const claimedLoggedIds = new Set<string>();
+    const result: PlannedMealStatus[] = [];
+
+    for (const sm of todaysPlanMeals) {
+      const rec = savedMeals.find(r => r.id === sm.recipeId) || null;
+      const s = rec?.totalServings || 1;
+      const mealServings = sm.servings || 1;
+      const plannedCal = Math.round((rec ? rec.calories / s : 0) * mealServings);
+      const plannedPro = Math.round((rec ? rec.protein / s : 0) * mealServings);
+      const plannedCar = Math.round((rec ? rec.carbs / s : 0) * mealServings);
+      const plannedFat = Math.round((rec ? rec.fat / s : 0) * mealServings);
+      const displayName = sm.customName || rec?.name || 'Plan-Mahlzeit';
+      const img = rec?.imageUri || (rec?.name ? collectibleImages[`recipe_${rec.name}`] : undefined);
+      const resolvedImg = img ? getResolvedUri(img) : undefined;
+
+      // 1. Exact scheduledMealId match
+      let match = (loggedMealsToday || []).find(l => !claimedLoggedIds.has(l.id) && l.scheduledMealId === sm.id);
+
+      // 2. Fallback: match by recipeId or name (if logged from elsewhere)
+      if (!match) {
+        match = (loggedMealsToday || []).find(l => 
+          !claimedLoggedIds.has(l.id) && (
+            (sm.recipeId && l.recipeId === sm.recipeId) ||
+            (displayName && l.name && l.name.trim().toLowerCase() === displayName.trim().toLowerCase()) ||
+            (rec?.name && l.name && l.name.trim().toLowerCase() === rec.name.trim().toLowerCase())
+          )
+        );
+      }
+
+      if (match) {
+        claimedLoggedIds.add(match.id);
+      }
+
+      result.push({
+        scheduledMeal: sm,
+        recipe: rec,
+        name: displayName,
+        plannedCal,
+        plannedPro,
+        plannedCar,
+        plannedFat,
+        isEaten: !!match,
+        matchedLoggedMealId: match ? match.id : null,
+        imageUri: resolvedImg,
+      });
+    }
+
+    return result;
+  }, [todaysPlanMeals, savedMeals, loggedMealsToday, collectibleImages]);
+
+  const planCalStats = React.useMemo(() => {
+    let totalPlanned = 0;
+    let remainingPlanned = 0;
+    let eatenCount = 0;
+
+    plannedMealsWithStatus.forEach(m => {
+      totalPlanned += m.plannedCal;
+      if (m.isEaten) {
+        eatenCount += 1;
+      } else {
+        remainingPlanned += m.plannedCal;
+      }
+    });
+
+    return {
+      totalPlanned,
+      remainingPlanned,
+      eatenCount,
+      totalCount: plannedMealsWithStatus.length,
+    };
+  }, [plannedMealsWithStatus]);
+
   const pendingPlanMeals = React.useMemo(() => {
-    return todaysPlanMeals.filter(m =>
-      !(skippedMealsToday || []).includes(m.id) &&
-      !(loggedMealsToday || []).some(logged => logged.scheduledMealId === m.id)
-    );
-  }, [todaysPlanMeals, skippedMealsToday, loggedMealsToday]);
+    return plannedMealsWithStatus
+      .filter(m => !m.isEaten && !(skippedMealsToday || []).includes(m.scheduledMeal.id))
+      .map(m => m.scheduledMeal);
+  }, [plannedMealsWithStatus, skippedMealsToday]);
 
   const currentBalancerMeal = React.useMemo(() => {
     if (!activeDietPlan) return null;
@@ -217,8 +315,10 @@ export default function NutritionScreen() {
 
   const isBalancerLoggedToday = React.useMemo(() => {
     if (!currentBalancerMeal) return false;
+    const statusMatch = plannedMealsWithStatus.find(m => m.scheduledMeal.id === currentBalancerMeal.id);
+    if (statusMatch) return statusMatch.isEaten;
     return (loggedMealsToday || []).some(l => l.scheduledMealId === currentBalancerMeal.id);
-  }, [currentBalancerMeal, loggedMealsToday]);
+  }, [currentBalancerMeal, plannedMealsWithStatus, loggedMealsToday]);
 
   const balancerRecipe = React.useMemo(() => {
     if (!currentBalancerMeal) return null;
@@ -235,9 +335,14 @@ export default function NutritionScreen() {
     const origCar = Math.round((balancerRecipe.carbs / s) * planServings);
     const origFat = Math.round((balancerRecipe.fat / s) * planServings);
 
-    // Target Ausgleich Budget: fill open daily calories (remTotal) so the goal is hit
+    // Other pending meals calories today (excluding the balancer meal itself)
+    const otherPendingCal = plannedMealsWithStatus
+      .filter(m => !m.isEaten && m.scheduledMeal.id !== currentBalancerMeal.id && !(skippedMealsToday || []).includes(m.scheduledMeal.id))
+      .reduce((sum, m) => sum + m.plannedCal, 0);
+
+    // Target Ausgleich Budget: fill remaining daily calories after accounting for other pending meals
     const remTotal = activeTargets.calories - consumedToday.calories;
-    const budget = Math.max(0, remTotal);
+    const budget = Math.max(0, remTotal - otherPendingCal);
     const ratio = origCal > 0 ? budget / origCal : 1;
 
     const scaledIngs = (balancerRecipe.ingredients || []).map(ri => {
@@ -263,7 +368,7 @@ export default function NutritionScreen() {
       scaledFat: Math.round(origFat * Math.max(0, ratio)),
       scaledIngs
     };
-  }, [currentBalancerMeal, balancerRecipe, activeTargets, consumedToday]);
+  }, [currentBalancerMeal, balancerRecipe, activeTargets, consumedToday, plannedMealsWithStatus, skippedMealsToday]);
 
   const handleQuickLogBalancer = () => {
     if (!currentBalancerMeal || !balancerRecipe || !balancerCalculation) return;
@@ -288,9 +393,66 @@ export default function NutritionScreen() {
     });
     triggerSuccess();
   };
+
+  const handleTogglePlannedMeal = (item: PlannedMealStatus) => {
+    if (!item.isEaten) {
+      if (item.scheduledMeal.isBalancerMeal && balancerCalculation && balancerCalculation.budget > 0) {
+        handleQuickLogBalancer();
+        return;
+      }
+
+      const servings = item.scheduledMeal.servings || 1;
+      const recipeServings = item.recipe?.totalServings || 1;
+      const ratio = servings / recipeServings;
+      const scaledIngredients = (item.recipe?.ingredients || []).map(req => ({
+        ...req,
+        amount: Math.round(req.amount * ratio)
+      }));
+
+      addLoggedMeal({
+        name: item.name,
+        ingredients: scaledIngredients,
+        calories: item.plannedCal,
+        protein: item.plannedPro,
+        carbs: item.plannedCar,
+        fat: item.plannedFat,
+        servingsLogged: servings,
+        scheduledMealId: item.scheduledMeal.id,
+        recipeId: item.recipe?.id,
+      });
+      triggerSuccess();
+    } else {
+      Alert.alert(
+        "Mahlzeit zurücksetzen?",
+        `Möchtest du "${item.name}" wieder als noch offen markieren und aus dem heutigen Log entfernen?`,
+        [
+          { text: "Abbrechen", style: "cancel" },
+          {
+            text: "Als offen markieren",
+            style: "destructive",
+            onPress: () => {
+              if (item.matchedLoggedMealId) {
+                deleteLoggedMeal(item.matchedLoggedMealId);
+                triggerLight();
+              }
+            }
+          }
+        ]
+      );
+    }
+  };
   
   // Ingredients Modals
   const [barcodeModalVisible, setBarcodeModalVisible] = useState(false);
+  const openBarcodeScannerOnMount = useAppStore(state => state.openBarcodeScannerOnMount);
+  const setOpenBarcodeScannerOnMount = useAppStore(state => state.setOpenBarcodeScannerOnMount);
+
+  useEffect(() => {
+    if (openBarcodeScannerOnMount) {
+      setBarcodeModalVisible(true);
+      setOpenBarcodeScannerOnMount(false);
+    }
+  }, [openBarcodeScannerOnMount, setOpenBarcodeScannerOnMount]);
   const [manualIngredientVisible, setManualIngredientVisible] = useState(false);
   const [ingredientEditor, setIngredientEditor] = useState<Ingredient | null>(null);
   const [editIngName, setEditIngName] = useState('');
@@ -315,6 +477,7 @@ export default function NutritionScreen() {
   
   // Recipe Builder
   const [recipeBuilderVisible, setRecipeBuilderVisible] = useState(false);
+  const [recipeToEdit, setRecipeToEdit] = useState<Recipe | null>(null);
   const [recipeToLog, setRecipeToLog] = useState<Recipe | null>(null);
   const [servingsToLog, setServingsToLog] = useState('1');
 
@@ -376,22 +539,40 @@ export default function NutritionScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView enableOnAndroid={true} extraScrollHeight={20} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, paddingBottom: bottomSpacing }}>
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 44) + 12 }]}>
+      <ScrollView enableOnAndroid={true} extraScrollHeight={20} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 0, paddingBottom: bottomSpacing }}>
         <View style={styles.header}>
           <Text style={styles.title}>Nutrition</Text>
-          <View style={{ flexDirection: 'row', gap: 14 }}>
-            <TouchableOpacity onPress={() => setShoppingListVisible(true)}>
-              <MaterialCommunityIcons name="cart-outline" size={26} color="#30D158" />
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+            <TouchableOpacity 
+              style={[styles.headerIconBtn, { backgroundColor: theme.cardBg, borderColor: theme.accentBorderSoft }]} 
+              onPress={() => setThemePickerVisible(true)}
+            >
+              <MaterialCommunityIcons name="palette-outline" size={20} color={theme.accent} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setDietPlanManagerVisible(true)}>
-              <MaterialCommunityIcons name="calendar-month" size={26} color="#00D2FF" />
+            <TouchableOpacity 
+              style={[styles.headerIconBtn, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} 
+              onPress={() => setShoppingListVisible(true)}
+            >
+              <MaterialCommunityIcons name="cart-outline" size={20} color="#30D158" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setHistoryModalVisible(true)}>
-              <MaterialCommunityIcons name="history" size={26} color="#BF5AF2" />
+            <TouchableOpacity 
+              style={[styles.headerIconBtn, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} 
+              onPress={() => setDietPlanManagerVisible(true)}
+            >
+              <MaterialCommunityIcons name="calendar-month" size={20} color={theme.accent} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setQuickScanModalVisible(true)}>
-              <MaterialCommunityIcons name="barcode-scan" size={26} color="#FFF" />
+            <TouchableOpacity 
+              style={[styles.headerIconBtn, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} 
+              onPress={() => setHistoryModalVisible(true)}
+            >
+              <MaterialCommunityIcons name="history" size={20} color="#BF5AF2" />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.headerIconBtn, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} 
+              onPress={() => setQuickScanModalVisible(true)}
+            >
+              <MaterialCommunityIcons name="barcode-scan" size={20} color="#FFF" />
             </TouchableOpacity>
           </View>
         </View>
@@ -399,14 +580,14 @@ export default function NutritionScreen() {
         {activeDietPlan && (
           <View style={styles.activePlanRow}>
             <TouchableOpacity 
-              style={styles.activePlanPill} 
+              style={[styles.activePlanPill, { backgroundColor: theme.accentBgSoft, borderColor: theme.accent }]} 
               onPress={() => {
                 setInitialPlanIdToEdit(activeDietPlan.id);
                 setDietPlanManagerVisible(true);
               }}
             >
-              <MaterialCommunityIcons name="calendar-check" size={18} color="#00D2FF" />
-              <Text style={styles.activePlanText}>Plan: {activeDietPlan.name}</Text>
+              <MaterialCommunityIcons name="calendar-check" size={18} color={theme.accent} />
+              <Text style={[styles.activePlanText, { color: theme.accent }]}>Plan: {activeDietPlan.name}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
@@ -419,13 +600,31 @@ export default function NutritionScreen() {
           </View>
         )}
 
-        {/* HERO CARD: OFFENE NÄHRWERTE & TAGESBILANZ */}
-        <View style={styles.remainingHeroCard}>
+        {/* HERO CARD: ALL-IN-ONE OFFENE NÄHRWERTE, PLAN-KARUSSELL, SLIM AUSGLEICH & QUICK-ADD */}
+        <View style={[styles.remainingHeroCard, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]}>
+          {/* A) Top: Offene Kalorien & Fortschritts-Ring */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.remainingLabel}>NOCH OFFEN HEUTE:</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 4, marginTop: 2 }}>
-                <Text style={[styles.remainingCalVal, remainingCal < 0 && { color: '#FF453A' }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={styles.remainingLabel}>NOCH OFFEN HEUTE:</Text>
+                {!activeDietPlan && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setTargetCal(targets.calories.toString());
+                      setTargetPro(targets.protein.toString());
+                      setTargetCar(targets.carbs.toString());
+                      setTargetFat(targets.fat.toString());
+                      setGlobalTargetsEditorVisible(true);
+                    }}
+                    style={[styles.inlineTargetEditBtn, { backgroundColor: theme.accentBgSoft }]}
+                  >
+                    <MaterialCommunityIcons name="pencil" size={11} color={theme.accent} />
+                    <Text style={[styles.inlineTargetEditText, { color: theme.accent }]}>Ziel</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 5, marginTop: 2 }}>
+                <Text style={[styles.remainingCalVal, { color: theme.accent }, remainingCal < 0 && { color: '#FF453A' }]}>
                   {remainingCal >= 0 ? remainingCal : `+${Math.abs(remainingCal)}`}
                 </Text>
                 <Text style={styles.remainingCalUnit}>
@@ -434,216 +633,410 @@ export default function NutritionScreen() {
               </View>
               <Text style={[styles.remainingStatusText, remainingCal < 0 ? { color: '#FF453A' } : { color: '#30D158' }]}>
                 {remainingCal >= 0
-                  ? `${pctLogged}% verzehrt • Noch ${Math.max(0, remainingCal)} kcal`
-                  : `Achtung: Tagesbudget um ${Math.abs(remainingCal)} kcal überschritten`}
+                  ? `${pctLogged}% verzehrt • ${consumedToday.calories} kcal gegessen`
+                  : `${consumedToday.calories} kcal gegessen • +${Math.abs(remainingCal)} kcal über Budget`}
               </Text>
             </View>
-            <View style={styles.progressCircleBox}>
+            <View style={[styles.progressCircleBox, { backgroundColor: theme.subCardBg, borderColor: theme.accentBorderSoft }, remainingCal < 0 && { borderColor: 'rgba(255, 69, 58, 0.55)' }]}>
               <Text style={styles.progressCircleText}>{pctLogged}%</Text>
             </View>
           </View>
 
-          {/* Remaining Macro Pills */}
+          {/* Dezente Kalorien-Fortschrittslinie */}
+          <View style={styles.remainingCalBarTrack}>
+            <View
+              style={[
+                styles.remainingCalBarFill,
+                {
+                  width: `${Math.min(100, pctLogged)}%`,
+                  backgroundColor: remainingCal < 0 ? '#FF453A' : theme.accent,
+                },
+              ]}
+            />
+          </View>
+
+          {/* B) Remaining Macro Pills MIT integrierten Mini-Progressbars */}
           <View style={styles.remainingMacroRow}>
-            <View style={styles.remainingMacroPill}>
-              <Text style={styles.remMacroLabel}>PROTEIN</Text>
+            <View style={[styles.remainingMacroPill, { backgroundColor: theme.subCardBg, borderColor: theme.subtleBorder }]}>
+              <View style={styles.remMacroHeaderRow}>
+                <Text style={styles.remMacroLabel}>PROTEIN</Text>
+                <Text style={styles.remMacroSub}>{consumedToday.protein}/{activeTargets.protein}g</Text>
+              </View>
               <Text style={[styles.remMacroVal, { color: '#30D158' }]}>{remainingPro}g</Text>
-              <Text style={styles.remMacroSub}>von {activeTargets.protein}g</Text>
+              <View style={styles.remMacroMiniBarTrack}>
+                <View 
+                  style={[
+                    styles.remMacroMiniBarFill, 
+                    { 
+                      backgroundColor: '#30D158', 
+                      width: `${Math.min(100, Math.round((consumedToday.protein / Math.max(1, activeTargets.protein)) * 100))}%` 
+                    }
+                  ]} 
+                />
+              </View>
             </View>
-            <View style={styles.remainingMacroPill}>
-              <Text style={styles.remMacroLabel}>CARBS</Text>
+
+            <View style={[styles.remainingMacroPill, { backgroundColor: theme.subCardBg, borderColor: theme.subtleBorder }]}>
+              <View style={styles.remMacroHeaderRow}>
+                <Text style={styles.remMacroLabel}>CARBS</Text>
+                <Text style={styles.remMacroSub}>{consumedToday.carbs}/{activeTargets.carbs}g</Text>
+              </View>
               <Text style={[styles.remMacroVal, { color: '#FFD60A' }]}>{remainingCar}g</Text>
-              <Text style={styles.remMacroSub}>von {activeTargets.carbs}g</Text>
+              <View style={styles.remMacroMiniBarTrack}>
+                <View 
+                  style={[
+                    styles.remMacroMiniBarFill, 
+                    { 
+                      backgroundColor: '#FFD60A', 
+                      width: `${Math.min(100, Math.round((consumedToday.carbs / Math.max(1, activeTargets.carbs)) * 100))}%` 
+                    }
+                  ]} 
+                />
+              </View>
             </View>
-            <View style={styles.remainingMacroPill}>
-              <Text style={styles.remMacroLabel}>FETT</Text>
+
+            <View style={[styles.remainingMacroPill, { backgroundColor: theme.subCardBg, borderColor: theme.subtleBorder }]}>
+              <View style={styles.remMacroHeaderRow}>
+                <Text style={styles.remMacroLabel}>FETT</Text>
+                <Text style={styles.remMacroSub}>{consumedToday.fat}/{activeTargets.fat}g</Text>
+              </View>
               <Text style={[styles.remMacroVal, { color: '#FF453A' }]}>{remainingFat}g</Text>
-              <Text style={styles.remMacroSub}>von {activeTargets.fat}g</Text>
+              <View style={styles.remMacroMiniBarTrack}>
+                <View 
+                  style={[
+                    styles.remMacroMiniBarFill, 
+                    { 
+                      backgroundColor: '#FF453A', 
+                      width: `${Math.min(100, Math.round((consumedToday.fat / Math.max(1, activeTargets.fat)) * 100))}%` 
+                    }
+                  ]} 
+                />
+              </View>
             </View>
           </View>
-        </View>
 
-        {/* AUSGLEICHS-MAHLZEIT WIDGET */}
-        {activeDietPlan && currentBalancerMeal && (
-          !isBalancerLoggedToday ? (
-            <View style={[styles.balancerLiveCard, (balancerCalculation?.ratio || 1) < 0.85 && styles.balancerLiveCardDeficit]}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <View style={{ flex: 1 }}>
-                  <View style={styles.balancerBadgeRow}>
-                    <MaterialCommunityIcons name="scale-balance" size={14} color="#FF9500" />
-                    <Text style={styles.balancerLiveBadgeText}>
-                      {currentBalancerMeal.isBalancerMeal ? 'AUSGLEICHS-MAHLZEIT' : 'LETZTE PLAN-MAHLZEIT'}
-                    </Text>
+          {/* AI MACRO COACH HERO TRIGGER */}
+          <TouchableOpacity
+            style={[
+              styles.aiCoachHeroBanner,
+              {
+                backgroundColor: 'rgba(192, 132, 252, 0.09)',
+                borderColor: 'rgba(192, 132, 252, 0.32)',
+              },
+            ]}
+            onPress={() => {
+              triggerLight();
+              setAiCoachModalVisible(true);
+            }}
+            activeOpacity={0.8}
+          >
+            <View style={styles.aiCoachBannerLeft}>
+              <View style={[styles.aiCoachIconCircle, { backgroundColor: 'rgba(192, 132, 252, 0.20)' }]}>
+                <MaterialCommunityIcons name="auto-fix" size={17} color="#C084FC" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={styles.aiCoachTitle}>AI Macro Coach</Text>
+                  <View style={styles.aiCoachBadge}>
+                    <Text style={styles.aiCoachBadgeText}>LÜCKE FÜLLEN</Text>
                   </View>
-                  <Text style={styles.balancerMealName}>{currentBalancerMeal.customName || balancerRecipe?.name}</Text>
-                  <Text style={styles.balancerOrigSub}>
-                    {balancerCalculation?.budget !== undefined && balancerCalculation.budget <= 0
-                      ? '⚠️ Tagesbudget durch andere Mahlzeiten/Snacks voll aufgebraucht'
-                      : `Berechnete Portion: ${balancerCalculation?.ratio.toFixed(2)}x (${balancerCalculation?.budget} kcal statt ${balancerCalculation?.origCal} kcal)`
-                    }
-                  </Text>
                 </View>
-                <TouchableOpacity
-                  style={styles.balancerActionBtn}
-                  onPress={() => {
-                    setSelectedBalancerTargetId(currentBalancerMeal.id);
-                    setBalancerModalVisible(true);
-                  }}
-                >
-                  <Text style={styles.balancerActionBtnText}>Details</Text>
-                  <MaterialCommunityIcons name="chevron-right" size={16} color="#00D2FF" />
-                </TouchableOpacity>
+                <Text style={styles.aiCoachSubtitle} numberOfLines={1}>
+                  {remainingCal > 0
+                    ? `3 Blitz-Ideen für ${remainingCal} kcal & ${remainingPro}g Protein`
+                    : 'Ziele erreicht! Ideen für Feintuning & Snacks'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.aiCoachActionBtn}>
+              <Text style={styles.aiCoachActionText}>Öffnen</Text>
+              <MaterialCommunityIcons name="chevron-right" size={16} color="#C084FC" />
+            </View>
+          </TouchableOpacity>
+
+          {/* C) SUB-WIDGET: HEUTIGE EINGEPLANTE MAHLZEITEN (Horizontales Karussell) */}
+          {activeDietPlan ? (
+            <View style={[styles.planSubSection, { borderTopColor: theme.subtleBorder }]}>
+              <View style={styles.planSubHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 6 }}>
+                  <MaterialCommunityIcons name="calendar-clock" size={14} color={theme.accent} />
+                  <Text style={[styles.planSubTitle, { color: theme.accent }]}>PLAN HEUTE</Text>
+                  {plannedMealsWithStatus.length > 0 && (
+                    <View style={[styles.planSubBadge, { backgroundColor: theme.accentBgSoft, borderColor: theme.accentBorderSoft }, planCalStats.eatenCount === planCalStats.totalCount && styles.planSubBadgeDone]}>
+                      <Text style={[styles.planSubBadgeText, { color: theme.accent }, planCalStats.eatenCount === planCalStats.totalCount && { color: '#30D158' }]}>
+                        {planCalStats.eatenCount}/{planCalStats.totalCount} gegessen
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {plannedMealsWithStatus.length > 0 && (
+                  <Text style={styles.planSubRemainingText}>
+                    Laut Plan noch: <Text style={{ color: theme.accent, fontWeight: '800' }}>{planCalStats.remainingPlanned} kcal</Text>
+                    <Text style={styles.planSubTotalText}> ({planCalStats.totalPlanned})</Text>
+                  </Text>
+                )}
               </View>
 
-              {/* Scaled ingredients preview if available */}
-              {balancerCalculation && balancerCalculation.scaledIngs.length > 0 && balancerCalculation.budget > 0 && (
-                <View style={styles.balancerIngsRow}>
-                  <Text style={styles.balancerIngsLabel}>Genaue Mengen:</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-                    {balancerCalculation.scaledIngs.map((ing, idx) => (
-                      <View key={idx} style={styles.balancerIngChip}>
-                        <Text style={styles.balancerIngChipText}>
-                          {ing.name}: <Text style={{ color: '#00D2FF', fontWeight: '800' }}>{ing.amount}g</Text>
-                        </Text>
-                      </View>
-                    ))}
-                  </ScrollView>
+              {plannedMealsWithStatus.length > 0 ? (
+                <RNScrollView 
+                  horizontal={true}
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.plannedMealsScroll}
+                  contentContainerStyle={styles.plannedMealsScrollContent}
+                >
+                  {plannedMealsWithStatus.map((item, index) => {
+                    return (
+                      <TouchableOpacity
+                        key={`${item.scheduledMeal.id}_${index}`}
+                        style={[styles.plannedMealCard, { backgroundColor: theme.subCardBg, borderColor: theme.subtleBorder }, item.isEaten && styles.plannedMealCardEaten]}
+                        activeOpacity={0.75}
+                        onPress={() => handleTogglePlannedMeal(item)}
+                      >
+                        <View style={styles.plannedMealThumbContainer}>
+                          {item.imageUri ? (
+                            <Image 
+                              source={{ uri: item.imageUri }} 
+                              style={[styles.plannedMealThumb, item.isEaten && styles.plannedMealThumbDimmed]} 
+                            />
+                          ) : (
+                            <View style={[styles.plannedMealThumbPlaceholder, item.isEaten && styles.plannedMealThumbPlaceholderDimmed]}>
+                              <MaterialCommunityIcons 
+                                name={item.scheduledMeal.isBalancerMeal ? "scale-balance" : "food-variant"} 
+                                size={22} 
+                                color={item.isEaten ? '#555' : (item.scheduledMeal.isBalancerMeal ? '#FF9500' : theme.accent)} 
+                              />
+                            </View>
+                          )}
+
+                          <View style={styles.plannedMealTimeOverlay}>
+                            <Text style={[styles.plannedMealTime, { color: theme.accent }, item.isEaten && styles.textDimmed]}>
+                              {item.scheduledMeal.time || '--:--'}
+                            </Text>
+                          </View>
+
+                          {item.scheduledMeal.isBalancerMeal && !item.isEaten && (
+                            <View style={styles.balancerMiniTagOverlay}>
+                              <Text style={styles.balancerMiniTagText}>Ausgleich</Text>
+                            </View>
+                          )}
+
+                          {item.isEaten ? (
+                            <View style={styles.plannedMealThumbCheck}>
+                              <View style={styles.plannedMealCheckCircle}>
+                                <MaterialCommunityIcons name="check-bold" size={15} color="#000" />
+                              </View>
+                            </View>
+                          ) : (
+                            !item.scheduledMeal.isBalancerMeal && (
+                              <View style={[styles.plannedMealAddCorner, { borderColor: theme.accentBorderSoft }]}>
+                                <MaterialCommunityIcons name="plus" size={13} color={theme.accent} />
+                              </View>
+                            )
+                          )}
+                        </View>
+
+                        <View style={styles.plannedMealCardBody}>
+                          <Text 
+                            style={[styles.plannedMealName, item.isEaten && styles.plannedMealNameEaten]} 
+                            numberOfLines={1}
+                          >
+                            {item.name}
+                          </Text>
+                          <Text style={[styles.plannedMealMacros, item.isEaten && styles.textDimmed]} numberOfLines={1}>
+                            <Text style={{ color: item.isEaten ? '#777' : theme.accent, fontWeight: '800' }}>
+                              {item.plannedCal} kcal
+                            </Text>
+                            {' • '}{item.plannedPro}g P
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </RNScrollView>
+              ) : (
+                <View style={styles.plannedMealsEmpty}>
+                  <Text style={styles.plannedMealsEmptyText}>
+                    Heute ({todayDayName}) sind keine Mahlzeiten im aktiven Plan eingetragen.
+                  </Text>
                 </View>
               )}
 
-              {balancerCalculation && balancerCalculation.budget > 0 && (
-                <TouchableOpacity
-                  style={styles.balancerQuickLogBtn}
-                  onPress={handleQuickLogBalancer}
-                >
-                  <MaterialCommunityIcons name="plus" size={16} color="#000" />
-                  <Text style={styles.balancerQuickLogBtnText}>
-                    Mit Ausgleich loggen ({balancerCalculation.budget} kcal)
-                  </Text>
-                </TouchableOpacity>
+              {/* D) KOMFORTABLE INTEGRIERTE AUSGLEICHS-LEISTE */}
+              {currentBalancerMeal && (
+                <View style={{ marginTop: 10 }}>
+                  <View style={[styles.slimBalancerBar, { backgroundColor: theme.subCardBg }]}>
+                    <TouchableOpacity 
+                      style={styles.slimBalancerLeft}
+                      activeOpacity={0.7}
+                      onPress={() => setShowBalancerGramRow(prev => !prev)}
+                    >
+                      <View style={styles.slimBalancerIconBox}>
+                        <MaterialCommunityIcons name="scale-balance" size={18} color="#FF9500" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.slimBalancerLabel} numberOfLines={1}>
+                          AUSGLEICH: <Text style={styles.slimBalancerMealTitle}>{currentBalancerMeal.customName || balancerRecipe?.name}</Text>
+                        </Text>
+                        <Text style={styles.slimBalancerInfo} numberOfLines={1}>
+                          {isBalancerLoggedToday ? (
+                            <Text style={{ color: '#30D158', fontWeight: '800' }}>Bereits geloggt ✓</Text>
+                          ) : balancerCalculation && balancerCalculation.budget <= 0 ? (
+                            <Text style={{ color: '#FF453A', fontWeight: '800' }}>Budget voll (0 kcal übrig)</Text>
+                          ) : (
+                            <Text style={{ color: theme.accent, fontWeight: '800' }}>
+                              {balancerCalculation?.ratio.toFixed(2)}x Portion • {balancerCalculation?.budget} kcal
+                            </Text>
+                          )}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    <View style={styles.slimBalancerActions}>
+                      <TouchableOpacity 
+                        style={[styles.slimBalancerGramBtn, showBalancerGramRow && { backgroundColor: theme.accentBgSoft, borderColor: theme.accentBorderSoft }]}
+                        onPress={() => setShowBalancerGramRow(prev => !prev)}
+                      >
+                        <Text style={[styles.slimBalancerGramBtnText, showBalancerGramRow && { color: theme.accent }]}>
+                          Gramm {showBalancerGramRow ? '▴' : '▾'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      {!isBalancerLoggedToday && balancerCalculation && balancerCalculation.budget > 0 ? (
+                        <TouchableOpacity 
+                          style={styles.slimBalancerLogBtn}
+                          onPress={handleQuickLogBalancer}
+                        >
+                          <Text style={styles.slimBalancerLogBtnText}>+ Loggen</Text>
+                        </TouchableOpacity>
+                      ) : isBalancerLoggedToday ? (
+                        <View style={styles.slimBalancerDonePill}>
+                          <MaterialCommunityIcons name="check-bold" size={14} color="#30D158" />
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
+
+                  {showBalancerGramRow && (
+                    <View style={[styles.slimBalancerGramPopup, { backgroundColor: theme.subCardBg, borderColor: theme.subtleBorder }]}>
+                      <View style={styles.slimGramChipsWrap}>
+                        {balancerCalculation && balancerCalculation.scaledIngs.length > 0 ? (
+                          balancerCalculation.scaledIngs.map((ing, idx) => (
+                            <View key={idx} style={styles.slimGramChipPill}>
+                              <Text style={styles.slimGramChipText}>
+                                {ing.name}: <Text style={{ color: theme.accent, fontWeight: '800' }}>{ing.amount}g</Text>
+                              </Text>
+                            </View>
+                          ))
+                        ) : (
+                          <Text style={styles.slimGramChipText}>Keine Zutaten hinterlegt</Text>
+                        )}
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setSelectedBalancerTargetId(currentBalancerMeal.id);
+                          setBalancerModalVisible(true);
+                        }}
+                        style={[styles.slimModalLinkBtn, { backgroundColor: theme.accentBgSoft, borderColor: theme.accentBorderSoft }]}
+                      >
+                        <Text style={[styles.slimModalLinkText, { color: theme.accent }]}>Anpassen ›</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
               )}
             </View>
           ) : (
-            <View style={styles.balancerDoneCard}>
-              <MaterialCommunityIcons name="check-circle" size={18} color="#30D158" />
-              <Text style={styles.balancerDoneText}>
-                Ausgleichs-Mahlzeit ({currentBalancerMeal.customName || balancerRecipe?.name}) für heute geloggt ✓
-              </Text>
+            <View style={[styles.planSubSection, { borderTopColor: theme.subtleBorder }]}>
+              <TouchableOpacity 
+                style={styles.plannedMealsNoPlanBtn}
+                onPress={() => setDietPlanManagerVisible(true)}
+              >
+                <MaterialCommunityIcons name="calendar-plus" size={16} color={theme.accent} />
+                <Text style={[styles.plannedMealsNoPlanText, { color: theme.accent }]}>Kein aktiver Ernährungsplan • Jetzt Plan auswählen</Text>
+              </TouchableOpacity>
             </View>
-          )
-        )}
+          )}
 
-        {/* Target Progress */}
-        <View style={styles.card}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <Text style={[styles.cardTitle, { marginBottom: 0 }]}>Daily Targets</Text>
-            {!activeDietPlan && (
-              <TouchableOpacity onPress={() => {
-                setTargetCal(targets.calories.toString());
-                setTargetPro(targets.protein.toString());
-                setTargetCar(targets.carbs.toString());
-                setTargetFat(targets.fat.toString());
-                setGlobalTargetsEditorVisible(true);
-              }}>
-                <MaterialCommunityIcons name="pencil" size={20} color="#00D2FF" />
+          {/* E) SCHLANKER QUICK-ADD (CARDIO) FOOTER DIREKT IM WIDGET */}
+          <View style={[styles.compactQuickAddFooter, { borderTopColor: theme.subtleBorder }]}>
+            <Text style={styles.compactQuickAddLabel}>⚡ QUICK-ADD (CARDIO):</Text>
+            <View style={{ flexDirection: 'row', gap: 6 }}>
+              <TouchableOpacity style={[styles.compactQuickAddPill, { backgroundColor: theme.accentBgSoft, borderColor: theme.accentBorderSoft }]} onPress={() => handleQuickAddCalories(150)}>
+                <Text style={[styles.compactQuickAddPillText, { color: theme.accent }]}>+150 kcal</Text>
               </TouchableOpacity>
-            )}
-          </View>
-          <MacroProgressBar label="Calories" current={consumedToday.calories} target={activeTargets.calories} color="#00D2FF" macroKey="calories" />
-          <MacroProgressBar label="Protein" current={consumedToday.protein} target={activeTargets.protein} color="#30D158" macroKey="protein" />
-          <MacroProgressBar label="Carbs" current={consumedToday.carbs} target={activeTargets.carbs} color="#FFD60A" macroKey="carbs" />
-          <MacroProgressBar label="Fat" current={consumedToday.fat} target={activeTargets.fat} color="#FF453A" macroKey="fat" />
-
-          {/* Quick Add for Cardio */}
-          <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#2C2C2E' }}>
-            <Text style={{ color: '#888', fontSize: 12, marginBottom: 8, fontWeight: '600' }}>QUICK ADD (e.g. CARDIO)</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <TouchableOpacity style={styles.quickAddBtn} onPress={() => handleQuickAddCalories(150)}>
-                <Text style={styles.quickAddBtnText}>+150 kcal</Text>
+              <TouchableOpacity style={[styles.compactQuickAddPill, { backgroundColor: theme.accentBgSoft, borderColor: theme.accentBorderSoft }]} onPress={() => handleQuickAddCalories(300)}>
+                <Text style={[styles.compactQuickAddPillText, { color: theme.accent }]}>+300 kcal</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.quickAddBtn} onPress={() => handleQuickAddCalories(300)}>
-                <Text style={styles.quickAddBtnText}>+300 kcal</Text>
+              <TouchableOpacity style={[styles.compactQuickAddPill, { backgroundColor: theme.accentBgSoft, borderColor: theme.accentBorderSoft }]} onPress={() => handleQuickAddCalories(500)}>
+                <Text style={[styles.compactQuickAddPillText, { color: theme.accent }]}>+500 kcal</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.quickAddBtn} onPress={() => handleQuickAddCalories(500)}>
-                <Text style={styles.quickAddBtnText}>+500 kcal</Text>
-              </TouchableOpacity>
-            </ScrollView>
+            </View>
           </View>
         </View>
 
-        {/* Managers */}
-        <View style={styles.managerRow}>
-          <TouchableOpacity style={styles.managerBtn} onPress={() => setManagerVisible('ingredients')}>
-            <MaterialCommunityIcons name="food-apple" size={24} color="#30D158" />
-            <Text style={styles.managerBtnText}>Ingredients ({ingredients.length})</Text>
+        {/* KOMPAKTES 4ER ACTION- & MANAGER-GRID */}
+        <View style={styles.compactToolsGrid}>
+          <TouchableOpacity style={[styles.compactToolCard, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} onPress={() => setManagerVisible('ingredients')}>
+            <MaterialCommunityIcons name="food-apple" size={20} color="#30D158" />
+            <Text style={styles.compactToolText} numberOfLines={1}>Zutaten ({ingredients.length})</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.managerBtn} onPress={() => setManagerVisible('recipes')}>
-            <MaterialCommunityIcons name="format-list-bulleted" size={24} color="#00D2FF" />
-            <Text style={styles.managerBtnText}>Recipes ({savedMeals.length})</Text>
+          <TouchableOpacity style={[styles.compactToolCard, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} onPress={() => setManagerVisible('recipes')}>
+            <MaterialCommunityIcons name="format-list-bulleted" size={20} color={theme.accent} />
+            <Text style={styles.compactToolText} numberOfLines={1}>Rezepte ({savedMeals.length})</Text>
           </TouchableOpacity>
-        </View>
-
-        {/* Global Actions */}
-        <View style={[styles.managerRow, { marginHorizontal: -4 }]}>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => setQuickScanModalVisible(true)}>
-            <MaterialCommunityIcons name="barcode-scan" size={20} color="#00D2FF" />
-            <Text style={styles.actionBtnText}>EAN</Text>
+          <TouchableOpacity style={[styles.compactToolCard, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} onPress={() => setQuickScanModalVisible(true)}>
+            <MaterialCommunityIcons name="barcode-scan" size={20} color={theme.accent} />
+            <Text style={[styles.compactToolText, { color: theme.accent }]} numberOfLines={1}>EAN Scan</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => setOnlineSearchVisible(true)}>
+          <TouchableOpacity style={[styles.compactToolCard, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} onPress={() => setOnlineSearchVisible(true)}>
             <MaterialCommunityIcons name="magnify" size={20} color="#FFD60A" />
-            <Text style={styles.actionBtnText}>Search</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => setShoppingListVisible(true)}>
-            <MaterialCommunityIcons name="cart-outline" size={20} color="#30D158" />
-            <Text style={styles.actionBtnText}>Einkauf</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => setHistoryModalVisible(true)}>
-            <MaterialCommunityIcons name="history" size={20} color="#BF5AF2" />
-            <Text style={styles.actionBtnText}>History</Text>
+            <Text style={[styles.compactToolText, { color: '#FFD60A' }]} numberOfLines={1}>Search</Text>
           </TouchableOpacity>
         </View>
 
+        {/* Logged Meals (Today's Log) */}
+        <View style={styles.todayLogHeaderRow}>
+          <Text style={[styles.subtitle, { marginTop: 0, marginBottom: 0 }]}>Today's Log ({loggedMealsToday.length})</Text>
+          <Text style={styles.todayLogHintText}>Tippen = Bearbeiten</Text>
+        </View>
+        <View style={{ flex: 1, paddingBottom: 20 }}>
+          {loggedMealsToday.length === 0 ? (
+            <Text style={styles.emptyText}>No meals logged today. Create a recipe to start logging!</Text>
+          ) : (
+            loggedMealsToday.map(meal => {
+              const match = savedMeals.find(r => r.id === meal.recipeId || r.name.toLowerCase() === meal.name.toLowerCase());
+              const mealImg = getResolvedUri(match?.imageUri || collectibleImages[`recipe_${meal.name}`]);
 
-      {/* Logged Meals */}
-      <Text style={styles.subtitle}>Today's Log</Text>
-      <View style={{ flex: 1, paddingBottom: 20 }}>
-        {loggedMealsToday.length === 0 ? (
-          <Text style={styles.emptyText}>No meals logged today. Create a recipe to start logging!</Text>
-        ) : (
-          loggedMealsToday.map(meal => {
-            const match = savedMeals.find(r => r.id === meal.recipeId || r.name.toLowerCase() === meal.name.toLowerCase());
-            const mealImg = getResolvedUri(match?.imageUri || collectibleImages[`recipe_${meal.name}`]);
+              return (
+                <TouchableOpacity key={meal.id} style={[styles.loggedMealItem, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} 
+                  onLongPress={() => {
+                    setActionMealId(meal.id);
+                  }}
+                  onPress={() => {
+                    if (meal.ingredients && meal.ingredients.length > 0) {
+                      setLoggedMealEditor(meal);
+                    } else {
+                      showCustomAlert("Legacy Meal", "This meal was created before ingredients were supported, so it cannot be edited.");
+                    }
+                  }}>
+                  {mealImg ? (
+                    <Image source={{ uri: mealImg }} style={styles.loggedMealThumb} />
+                  ) : null}
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.mealTime, { color: theme.accent }]}>{meal.time}</Text>
+                    <Text style={styles.mealName} numberOfLines={1}>{meal.name}</Text>
+                    <Text style={styles.mealMacros}>{meal.calories} kcal • {meal.protein}g P • {meal.carbs}g C • {meal.fat}g F</Text>
+                  </View>
 
-            return (
-              <TouchableOpacity key={meal.id} style={styles.loggedMealItem} 
-                onLongPress={() => {
-                  setActionMealId(meal.id);
-                }}
-                onPress={() => {
-                  if (meal.ingredients && meal.ingredients.length > 0) {
-                    setLoggedMealEditor(meal);
-                  } else {
-                    showCustomAlert("Legacy Meal", "This meal was created before ingredients were supported, so it cannot be edited.");
-                  }
-                }}>
-                {mealImg ? (
-                  <Image source={{ uri: mealImg }} style={styles.loggedMealThumb} />
-                ) : null}
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.mealTime}>{meal.time}</Text>
-                  <Text style={styles.mealName}>{meal.name}</Text>
-                  <Text style={styles.mealMacros}>{meal.calories} kcal • {meal.protein}g P • {meal.carbs}g C • {meal.fat}g F</Text>
-                </View>
-
-                <TouchableOpacity onPress={() => deleteLoggedMeal(meal.id)} style={{ padding: 8 }}>
-                  <MaterialCommunityIcons name="trash-can-outline" size={20} color="#FF453A" />
+                  <TouchableOpacity onPress={() => deleteLoggedMeal(meal.id)} style={{ padding: 6 }}>
+                    <MaterialCommunityIcons name="trash-can-outline" size={19} color="#FF453A" />
+                  </TouchableOpacity>
                 </TouchableOpacity>
-              </TouchableOpacity>
-            );
-          })
-        )}
-
-      </View>
+              );
+            })
+          )}
+        </View>
 
       </ScrollView>
 
@@ -658,7 +1051,7 @@ export default function NutritionScreen() {
 
           <View style={styles.addActionsRow}>
             <TouchableOpacity style={styles.actionBtn} onPress={() => setBarcodeModalVisible(true)}>
-              <MaterialCommunityIcons name="barcode-scan" size={20} color="#00D2FF" />
+              <MaterialCommunityIcons name="barcode-scan" size={20} color={theme.accent || "#00D2FF"} />
               <Text style={styles.actionBtnText}>Scan EAN</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionBtn} onPress={() => setManualIngredientVisible(true)}>
@@ -727,7 +1120,7 @@ export default function NutritionScreen() {
                   setEditIngCar(ing.carbs.toString());
                   setEditIngFat(ing.fat.toString());
                 }}>
-                  <MaterialCommunityIcons name="pencil" size={22} color="#00D2FF" />
+                  <MaterialCommunityIcons name="pencil" size={22} color={theme.accent || "#00D2FF"} />
                 </TouchableOpacity>
                 <TouchableOpacity style={{ padding: 8 }} onPress={() => deleteIngredient(ing.id)}>
                   <MaterialCommunityIcons name="trash-can-outline" size={22} color="#FF453A" />
@@ -749,7 +1142,10 @@ export default function NutritionScreen() {
 
           </View>
 
-          <TouchableOpacity style={styles.fullBtn} onPress={() => setRecipeBuilderVisible(true)}>
+          <TouchableOpacity style={styles.fullBtn} onPress={() => {
+            setRecipeToEdit(null);
+            setRecipeBuilderVisible(true);
+          }}>
             <MaterialCommunityIcons name="plus" size={24} color="#FFF" />
             <Text style={styles.fullBtnText}>Create New Recipe</Text>
           </TouchableOpacity>
@@ -813,7 +1209,7 @@ export default function NutritionScreen() {
                         </>
                       ) : (
                         <View style={styles.recipeImagePlaceholder}>
-                          <MaterialCommunityIcons name="camera-plus" size={22} color="#00D2FF" />
+                          <MaterialCommunityIcons name="camera-plus" size={22} color={theme.accent || "#00D2FF"} />
                           <Text style={styles.recipeImagePlaceholderText}>+ Foto</Text>
                         </View>
                       )}
@@ -830,15 +1226,25 @@ export default function NutritionScreen() {
                     >
                       <Text style={styles.poolName} numberOfLines={1}>{recipe.name}</Text>
                       <Text style={styles.recipeServingMacros}>
-                        1 Port.: <Text style={{ color: '#00D2FF', fontWeight: 'bold' }}>{perServingCal} kcal</Text> • {perServingPro}P • {perServingCar}C • {perServingFat}F
+                        1 Port.: <Text style={{ color: theme.accent || '#00D2FF', fontWeight: 'bold' }}>{perServingCal} kcal</Text> • {perServingPro}P • {perServingCar}C • {perServingFat}F
                       </Text>
                       <Text style={styles.poolSub}>
                         Gesamt: {recipe.calories} kcal ({s} {s === 1 ? 'Portion' : 'Portionen'}) • {(recipe.ingredients || []).length} Zutaten
                       </Text>
                     </TouchableOpacity>
 
-                    {/* Actions: Log Pill & Delete */}
+                    {/* Actions: Edit, Log Pill & Delete */}
                     <View style={styles.recipeCardActions}>
+                      <TouchableOpacity 
+                        onPress={() => {
+                          setRecipeToEdit(recipe);
+                          setRecipeBuilderVisible(true);
+                        }} 
+                        style={styles.editRecipePill}
+                      >
+                        <MaterialCommunityIcons name="pencil" size={14} color={theme.accent || "#00D2FF"} style={{ marginRight: 2 }} />
+                        <Text style={styles.editRecipePillText}>Edit</Text>
+                      </TouchableOpacity>
                       <TouchableOpacity 
                         onPress={() => {
                           setRecipeToLog(recipe);
@@ -930,7 +1336,7 @@ export default function NutritionScreen() {
                         <Image source={{ uri: recipeImg }} style={styles.portionModalThumb} />
                       ) : (
                         <View style={styles.portionModalThumbPlaceholder}>
-                          <MaterialCommunityIcons name="food-variant" size={28} color="#00D2FF" />
+                          <MaterialCommunityIcons name="food-variant" size={28} color={theme.accent || "#00D2FF"} />
                         </View>
                       )}
                       <View style={{ flex: 1, marginLeft: 12 }}>
@@ -939,9 +1345,23 @@ export default function NutritionScreen() {
                           Rezept ergibt gesamt {totalS} {totalS === 1 ? 'Portion' : 'Portionen'}
                         </Text>
                       </View>
-                      <TouchableOpacity onPress={() => setRecipeToLog(null)} style={{ padding: 6 }}>
-                        <MaterialCommunityIcons name="close" size={24} color="#888" />
-                      </TouchableOpacity>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <TouchableOpacity 
+                          onPress={() => {
+                            const r = recipeToLog;
+                            setRecipeToLog(null);
+                            setRecipeToEdit(r);
+                            setRecipeBuilderVisible(true);
+                          }} 
+                          style={{ padding: 6, marginRight: 4 }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <MaterialCommunityIcons name="pencil" size={22} color={theme.accent || "#00D2FF"} />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => setRecipeToLog(null)} style={{ padding: 6 }}>
+                          <MaterialCommunityIcons name="close" size={24} color="#888" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
 
                     {/* Live Macro Breakdown for chosen portions */}
@@ -1047,7 +1467,11 @@ export default function NutritionScreen() {
 
       <EnhancedRecipeBuilder 
         visible={recipeBuilderVisible} 
-        onClose={() => setRecipeBuilderVisible(false)} 
+        onClose={() => {
+          setRecipeBuilderVisible(false);
+          setRecipeToEdit(null);
+        }} 
+        recipeToEdit={recipeToEdit}
       />
 
       {/* LOGGED MEAL EDITOR */}
@@ -1201,7 +1625,7 @@ export default function NutritionScreen() {
                 autoFocus
               />
               <TouchableOpacity 
-                style={{ backgroundColor: '#00D2FF', justifyContent: 'center', paddingHorizontal: 20, borderRadius: 12 }}
+                style={{ backgroundColor: theme.accent || '#00D2FF', justifyContent: 'center', paddingHorizontal: 20, borderRadius: 12 }}
                 onPress={searchOnlineFood}
                 disabled={isSearching}
               >
@@ -1280,7 +1704,7 @@ export default function NutritionScreen() {
             <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 16 }}>
                {['100', '250', '350', '400', '500'].map(p => (
                  <TouchableOpacity key={p} style={{ backgroundColor: '#1E1E1E', padding: 10, borderRadius: 8 }} onPress={() => setOnlineFoodPortion(p)}>
-                   <Text style={{ color: '#00D2FF', fontWeight: 'bold' }}>{p}g</Text>
+                   <Text style={{ color: theme.accent || '#00D2FF', fontWeight: 'bold' }}>{p}g</Text>
                  </TouchableOpacity>
                ))}
 
@@ -1336,7 +1760,7 @@ export default function NutritionScreen() {
                setActionMealId(null);
             }
           }}>
-            <MaterialCommunityIcons name="calendar-arrow-left" size={24} color="#00D2FF" />
+            <MaterialCommunityIcons name="calendar-arrow-left" size={24} color={theme.accent || "#00D2FF"} />
             <Text style={styles.actionMenuBtnText}>Log for Yesterday</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.actionMenuBtn, { marginTop: 12 }]} onPress={() => {
@@ -1460,7 +1884,7 @@ export default function NutritionScreen() {
                         ) : (
                           day.meals.map((meal) => (
                             <View key={meal.id} style={{ marginBottom: 8 }}>
-                              <Text style={{ color: '#00D2FF', fontSize: 12, fontWeight: '800' }}>{meal.time}</Text>
+                              <Text style={{ color: theme.accent || '#00D2FF', fontSize: 12, fontWeight: '800' }}>{meal.time}</Text>
                               <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }}>{meal.name}</Text>
                               <Text style={{ color: '#888', fontSize: 12 }}>{meal.calories} kcal • {meal.protein}g P • {meal.carbs}g C • {meal.fat}g F</Text>
 
@@ -1493,6 +1917,20 @@ export default function NutritionScreen() {
         targetMealId={selectedBalancerTargetId}
       />
 
+      <AiNutritionCoachModal
+        visible={aiCoachModalVisible}
+        onClose={() => setAiCoachModalVisible(false)}
+        remainingCal={remainingCal}
+        remainingPro={remainingPro}
+        remainingCar={remainingCar}
+        remainingFat={remainingFat}
+      />
+
+      <AccentThemePickerModal
+        visible={themePickerVisible}
+        onClose={() => setThemePickerVisible(false)}
+      />
+
     </View>
 
   );
@@ -1500,15 +1938,29 @@ export default function NutritionScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#121212', paddingHorizontal: 0 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  title: { fontSize: 32, fontWeight: '800', color: '#FFF' },
+  header: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    minHeight: 44,
+    marginBottom: 14,
+  },
+  title: { fontSize: 26, fontWeight: '800', color: '#FFF', letterSpacing: -0.5 },
+  headerIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   activePlanPill: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#00D2FF20', padding: 12, borderRadius: 12, marginBottom: 0, gap: 8, borderWidth: 1, borderColor: '#00D2FF' },
   activePlanText: { color: '#00D2FF', fontSize: 16, fontWeight: '700' },
   subtitle: { fontSize: 22, fontWeight: '800', color: '#FFF', marginTop: 32, marginBottom: 16 },
   modalSubtitle: { fontSize: 13, color: '#888', marginTop: 4 },
   emptyText: { color: '#888', fontStyle: 'italic', marginTop: 12 },
   
-  card: { backgroundColor: '#1E1E1E', padding: 20, borderRadius: 16, borderWidth: 1, borderColor: '#333' },
+  card: { backgroundColor: '#161C22', padding: 20, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(0, 210, 255, 0.28)' },
   cardTitle: { fontSize: 18, fontWeight: '700', color: '#FFF', marginBottom: 16 },
   
   macroRow: { marginBottom: 12 },
@@ -1523,13 +1975,13 @@ const styles = StyleSheet.create({
 
   managerRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
 
-  actionMenuBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E1E1E', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#333' },
+  actionMenuBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#161C22', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(0, 210, 255, 0.28)' },
   actionMenuBtnText: { color: '#FFF', fontSize: 16, fontWeight: '700', marginLeft: 12 },
 
-  managerBtn: { flex: 1, backgroundColor: '#1E1E1E', marginHorizontal: 4, borderRadius: 12, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+  managerBtn: { flex: 1, backgroundColor: '#161C22', marginHorizontal: 4, borderRadius: 12, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(0, 210, 255, 0.28)' },
   managerBtnText: { color: '#FFF', marginTop: 8, fontWeight: '600', fontSize: 12 },
 
-  loggedMealItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E1E1E', padding: 16, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#333' },
+  loggedMealItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#161C22', padding: 16, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: 'rgba(0, 210, 255, 0.28)' },
   mealTime: { color: '#00D2FF', fontSize: 12, fontWeight: '800', marginBottom: 2 },
   mealName: { color: '#FFF', fontSize: 16, fontWeight: '700' },
   mealMacros: { color: '#888', fontSize: 12, marginTop: 4 },
@@ -1540,10 +1992,10 @@ const styles = StyleSheet.create({
   modalScroll: { flexGrow: 1, padding: 16 },
 
   addActionsRow: { flexDirection: 'row', padding: 16, gap: 12 },
-  actionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1E1E1E', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#333' , marginHorizontal: 4, marginBottom: 12 },
+  actionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#161C22', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(0, 210, 255, 0.28)' , marginHorizontal: 4, marginBottom: 12 },
   actionBtnText: { color: '#FFF', fontWeight: '700', marginLeft: 8 },
 
-  poolItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E1E1E', padding: 16, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#333' },
+  poolItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#161C22', padding: 16, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: 'rgba(0, 210, 255, 0.28)' },
   poolName: { color: '#FFF', fontSize: 16, fontWeight: '700' },
   poolMacros: { color: '#888', fontSize: 12, marginTop: 4 },
   poolSub: { color: '#00D2FF', fontSize: 11, fontWeight: '700', marginTop: 2 },
@@ -1587,12 +2039,12 @@ const styles = StyleSheet.create({
   recipeCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#161C22',
     padding: 12,
     borderRadius: 14,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#2E2E32',
+    borderColor: 'rgba(0, 210, 255, 0.28)',
   },
   recipeImageWrapper: {
     width: 68,
@@ -1813,185 +2265,574 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   remainingHeroCard: {
-    backgroundColor: '#1E1E1E',
-    padding: 18,
+    backgroundColor: '#161C22',
+    padding: 14,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#333',
-    marginBottom: 14,
+    borderColor: 'rgba(0, 210, 255, 0.28)',
+    marginBottom: 12,
+  },
+  inlineTargetEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 210, 255, 0.12)',
+  },
+  inlineTargetEditText: {
+    color: '#00D2FF',
+    fontSize: 10,
+    fontWeight: '800',
   },
   remainingLabel: {
     color: '#888',
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.8,
   },
   remainingCalVal: {
-    fontSize: 34,
+    fontSize: 32,
     fontWeight: '900',
     color: '#00D2FF',
   },
   remainingCalUnit: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#AAA',
     fontWeight: '600',
   },
   remainingStatusText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
-    marginTop: 4,
+    marginTop: 2,
   },
   progressCircleBox: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#141414',
-    borderWidth: 3,
-    borderColor: '#00D2FF',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#12171D',
+    borderWidth: 2,
+    borderColor: 'rgba(0, 210, 255, 0.55)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   progressCircleText: {
     color: '#FFF',
     fontWeight: '900',
-    fontSize: 15,
+    fontSize: 13,
+  },
+  remainingCalBarTrack: {
+    width: '100%',
+    height: 4,
+    backgroundColor: '#222B33',
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginTop: 8,
+  },
+  remainingCalBarFill: {
+    height: '100%',
+    borderRadius: 2,
   },
   remainingMacroRow: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 14,
+    marginTop: 10,
   },
   remainingMacroPill: {
     flex: 1,
-    backgroundColor: '#141414',
-    padding: 10,
+    backgroundColor: '#12171D',
+    padding: 8,
     borderRadius: 12,
-    alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#222C36',
+  },
+  remMacroHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   remMacroLabel: {
     color: '#888',
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
-    marginBottom: 2,
   },
   remMacroVal: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '900',
+    marginTop: 2,
   },
   remMacroSub: {
-    color: '#666',
-    fontSize: 10,
-    marginTop: 2,
+    color: '#777',
+    fontSize: 9,
     fontWeight: '600',
   },
-  balancerLiveCard: {
-    backgroundColor: '#1A232A',
-    padding: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 210, 255, 0.35)',
-    marginBottom: 14,
+  remMacroMiniBarTrack: {
+    width: '100%',
+    height: 4,
+    backgroundColor: '#222B33',
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginTop: 5,
   },
-  balancerLiveCardDeficit: {
-    backgroundColor: '#261C14',
-    borderColor: 'rgba(255, 149, 0, 0.4)',
+  remMacroMiniBarFill: {
+    height: '100%',
+    borderRadius: 2,
   },
-  balancerBadgeRow: {
+  editRecipePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    marginBottom: 4,
+    backgroundColor: 'rgba(0, 210, 255, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 210, 255, 0.4)',
+    marginRight: 6,
   },
-  balancerLiveBadgeText: {
+  editRecipePillText: {
+    color: '#00D2FF',
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  planSubSection: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#222C36',
+  },
+  planSubHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  planSubTitle: {
+    color: '#00D2FF',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.7,
+  },
+  planSubBadge: {
+    backgroundColor: '#16232D',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#263B4D',
+  },
+  planSubBadgeDone: {
+    backgroundColor: 'rgba(48, 209, 88, 0.15)',
+    borderColor: 'rgba(48, 209, 88, 0.4)',
+  },
+  planSubBadgeText: {
+    color: '#00D2FF',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  planSubRemainingText: {
+    color: '#DDD',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  planSubTotalText: {
+    color: '#778899',
+    fontSize: 9,
+  },
+  plannedMealsScroll: {
+    marginTop: 2,
+  },
+  plannedMealsScrollContent: {
+    paddingVertical: 2,
+    gap: 8,
+  },
+  plannedMealCard: {
+    width: 122,
+    backgroundColor: '#12171D',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#222C36',
+    overflow: 'hidden',
+  },
+  plannedMealCardEaten: {
+    backgroundColor: '#101417',
+    borderColor: '#1E262E',
+    opacity: 0.48,
+  },
+  plannedMealThumbContainer: {
+    position: 'relative',
+    width: '100%',
+    height: 62,
+    backgroundColor: '#1B252E',
+    overflow: 'hidden',
+  },
+  plannedMealThumb: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  plannedMealThumbDimmed: {
+    opacity: 0.45,
+  },
+  plannedMealThumbPlaceholder: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#1B252E',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  plannedMealThumbPlaceholderDimmed: {
+    backgroundColor: '#13181C',
+  },
+  plannedMealTimeOverlay: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    backgroundColor: 'rgba(12, 16, 20, 0.82)',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 5,
+  },
+  plannedMealTime: {
+    color: '#00D2FF',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  balancerMiniTagOverlay: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: '#FF9500',
+    paddingHorizontal: 4,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  balancerMiniTagText: {
+    color: '#000',
+    fontSize: 8,
+    fontWeight: '900',
+  },
+  plannedMealAddCorner: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(12, 16, 20, 0.82)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 210, 255, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  plannedMealThumbCheck: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(16, 24, 20, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  plannedMealCheckCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#30D158',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  plannedMealCardBody: {
+    padding: 6,
+  },
+  plannedMealName: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  plannedMealNameEaten: {
+    color: '#888',
+    textDecorationLine: 'line-through',
+  },
+  plannedMealMacros: {
+    color: '#8E9DA8',
+    fontSize: 10,
+    marginTop: 1,
+  },
+  textDimmed: {
+    color: '#666',
+  },
+  slimBalancerBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#12171D',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 149, 0, 0.4)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  slimBalancerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 9,
+  },
+  slimBalancerIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    backgroundColor: 'rgba(255, 149, 0, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 149, 0, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  slimBalancerLabel: {
     color: '#FF9500',
     fontSize: 10,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
-  balancerMealName: {
+  slimBalancerMealTitle: {
     color: '#FFF',
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: '800',
   },
-  balancerOrigSub: {
-    color: '#AAA',
+  slimBalancerInfo: {
+    color: '#E5E7EB',
     fontSize: 12,
-    marginTop: 3,
-    fontWeight: '500',
+    fontWeight: '700',
+    marginTop: 2,
   },
-  balancerActionBtn: {
+  slimBalancerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 210, 255, 0.1)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
+    gap: 7,
+  },
+  slimBalancerGramBtn: {
+    backgroundColor: '#1F2933',
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderRadius: 9,
     borderWidth: 1,
-    borderColor: 'rgba(0, 210, 255, 0.3)',
-    gap: 2,
+    borderColor: '#324150',
   },
-  balancerActionBtnText: {
-    color: '#00D2FF',
-    fontSize: 12,
-    fontWeight: '700',
+  slimBalancerGramBtnActive: {
+    backgroundColor: 'rgba(0, 210, 255, 0.14)',
+    borderColor: 'rgba(0, 210, 255, 0.45)',
   },
-  balancerIngsRow: {
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#28343E',
-  },
-  balancerIngsLabel: {
-    color: '#888',
+  slimBalancerGramBtnText: {
+    color: '#E5E7EB',
     fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 6,
+    fontWeight: '800',
   },
-  balancerIngChip: {
-    backgroundColor: '#12181E',
+  slimBalancerLogBtn: {
+    backgroundColor: '#FF9500',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 9,
+  },
+  slimBalancerLogBtnText: {
+    color: '#000',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  slimBalancerDonePill: {
+    backgroundColor: 'rgba(48, 209, 88, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(48, 209, 88, 0.4)',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 9,
+  },
+  slimBalancerGramPopup: {
+    marginTop: 7,
+    backgroundColor: '#12171D',
+    borderWidth: 1,
+    borderColor: '#222C36',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  slimGramChipsWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  slimGramChipPill: {
+    backgroundColor: '#1A222B',
+    borderWidth: 1,
+    borderColor: '#2A3644',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 7,
+  },
+  slimGramChipText: {
+    color: '#E5E7EB',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  slimModalLinkBtn: {
+    backgroundColor: 'rgba(0, 210, 255, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 210, 255, 0.35)',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#2A3640',
   },
-  balancerIngChipText: {
-    color: '#DDD',
-    fontSize: 12,
+  slimModalLinkText: {
+    color: '#00D2FF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  compactQuickAddFooter: {
+    marginTop: 10,
+    paddingTop: 9,
+    borderTopWidth: 1,
+    borderTopColor: '#222C36',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  compactQuickAddLabel: {
+    color: '#888',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  compactQuickAddPill: {
+    backgroundColor: '#16222B',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 210, 255, 0.35)',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+  },
+  compactQuickAddPillText: {
+    color: '#00D2FF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  compactToolsGrid: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+  },
+  compactToolCard: {
+    flex: 1,
+    backgroundColor: '#161C22',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 210, 255, 0.28)',
+    borderRadius: 12,
+    paddingVertical: 9,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  compactToolText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  todayLogHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  todayLogHintText: {
+    color: '#666',
+    fontSize: 10,
     fontWeight: '600',
   },
-  balancerQuickLogBtn: {
+  plannedMealsEmpty: {
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  plannedMealsEmptyText: {
+    color: '#778',
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  plannedMealsNoPlanBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#00D2FF',
-    paddingVertical: 10,
-    borderRadius: 10,
-    marginTop: 12,
+    paddingVertical: 6,
     gap: 6,
   },
-  balancerQuickLogBtnText: {
-    color: '#000',
+  plannedMealsNoPlanText: {
+    color: '#00D2FF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  aiCoachHeroBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 10,
+  },
+  aiCoachBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 6,
+  },
+  aiCoachIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  aiCoachTitle: {
+    color: '#FFF',
     fontSize: 13,
     fontWeight: '900',
   },
-  balancerDoneCard: {
+  aiCoachBadge: {
+    backgroundColor: 'rgba(192, 132, 252, 0.25)',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  aiCoachBadgeText: {
+    color: '#C084FC',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  aiCoachSubtitle: {
+    color: '#AAA',
+    fontSize: 11,
+    marginTop: 1,
+  },
+  aiCoachActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(48, 209, 88, 0.1)',
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(48, 209, 88, 0.3)',
-    marginBottom: 14,
-    gap: 8,
+    gap: 2,
+    backgroundColor: 'rgba(192, 132, 252, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
-  balancerDoneText: {
-    color: '#30D158',
-    fontSize: 13,
-    fontWeight: '700',
-    flex: 1,
+  aiCoachActionText: {
+    color: '#C084FC',
+    fontSize: 11,
+    fontWeight: '800',
   },
 });

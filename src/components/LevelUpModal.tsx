@@ -4,12 +4,15 @@ import { useAppStore } from '../store/store';
 import ConfettiCannon from 'react-native-confetti-cannon';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { getLevelData } from '../utils/gamification';
+import { getAppTheme } from '../utils/theme';
 
 const { width } = Dimensions.get('window');
 
 export default function LevelUpModal() {
   const levelUpData = useAppStore(state => state.levelUpData);
   const setLevelUpData = useAppStore(state => state.setLevelUpData);
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
 
   if (!levelUpData) return null;
 
@@ -19,15 +22,15 @@ export default function LevelUpModal() {
   return (
     <Modal visible={!!levelUpData} transparent animationType="fade">
       <View style={styles.overlay}>
-        <View style={styles.modalContent}>
+        <View style={[styles.modalContent, { backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333', shadowColor: theme.accent || '#00D2FF' }]}>
           <View style={styles.iconContainer}>
             <MaterialCommunityIcons name="shield-star" size={80} color={levelData.rankColor} />
           </View>
-          <Text style={styles.title}>LEVEL UP!</Text>
+          <Text style={[styles.title, { color: theme.accent || '#00D2FF' }]}>LEVEL UP!</Text>
           <Text style={styles.levelText}>You are now Level {newLevel}</Text>
           <Text style={[styles.rankText, { color: levelData.rankColor }]}>{levelData.title}</Text>
           
-          <TouchableOpacity style={styles.button} onPress={() => setLevelUpData(null)}>
+          <TouchableOpacity style={[styles.button, { backgroundColor: theme.accent || '#00D2FF' }]} onPress={() => setLevelUpData(null)}>
             <Text style={styles.buttonText}>Awesome!</Text>
           </TouchableOpacity>
         </View>

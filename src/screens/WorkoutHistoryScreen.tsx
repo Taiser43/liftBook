@@ -4,9 +4,12 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppStore, WorkoutPlan, Exercise } from '../store/store';
 import { CompletedWorkout } from '../store/store';
 import { useBottomSpacing } from '../hooks/useBottomSpacing';
+import { getAppTheme } from '../utils/theme';
 
 export default function WorkoutHistoryScreen({ navigation }: any) {
   const bottomSpacing = useBottomSpacing();
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const workoutHistory = useAppStore(state => state.workoutHistory);
   const workoutPrograms = useAppStore(state => state.workoutPrograms);
   const updateWorkoutProgram = useAppStore(state => state.updateWorkoutProgram);
@@ -98,7 +101,11 @@ export default function WorkoutHistoryScreen({ navigation }: any) {
 
     return (
       <TouchableOpacity 
-        style={[styles.sessionCard, item.isFavorite && styles.sessionCardFavorite]} 
+        style={[
+          styles.sessionCard, 
+          { backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333' },
+          item.isFavorite && styles.sessionCardFavorite
+        ]} 
         onPress={() => {
           if (editingId === item.id) return;
           setExpandedId(isExpanded ? null : item.id);
@@ -132,7 +139,7 @@ export default function WorkoutHistoryScreen({ navigation }: any) {
               </View>
             )}
           </View>
-          <Text style={styles.sessionVolume}>
+          <Text style={[styles.sessionVolume, { color: theme.accent || '#00D2FF' }]}>
             {item.exercises.length} <Text style={{fontSize: 14, color: '#888'}}>Exs</Text>
           </Text>
         </View>
@@ -147,11 +154,11 @@ export default function WorkoutHistoryScreen({ navigation }: any) {
 
         {isExpanded && (
           <View style={styles.expandedContent}>
-            <View style={styles.divider} />
+            <View style={[styles.divider, { backgroundColor: theme.subtleBorder || '#333' }]} />
             
             {/* Inline Editor for Name and Partner */}
             {isEditing ? (
-              <View style={styles.editSection}>
+              <View style={[styles.editSection, { backgroundColor: theme.subCardBg || '#18181A', borderColor: theme.cardBorder || '#333' }]}>
                 <Text style={styles.editLabel}>WORKOUT NAME</Text>
                 <TextInput
                   style={styles.editInput}
@@ -178,7 +185,7 @@ export default function WorkoutHistoryScreen({ navigation }: any) {
                     <Text style={{ color: '#888', fontWeight: 'bold' }}>Abbrechen</Text>
                   </TouchableOpacity>
                   <TouchableOpacity 
-                    style={[styles.smallBtn, { backgroundColor: '#00D2FF' }]}
+                    style={[styles.smallBtn, { backgroundColor: theme.accent || '#00D2FF' }]}
                     onPress={() => handleSaveMetadata(item)}
                   >
                     <Text style={{ color: '#000', fontWeight: 'bold' }}>Speichern</Text>
@@ -196,8 +203,8 @@ export default function WorkoutHistoryScreen({ navigation }: any) {
                     setEditPartner(item.trainingPartner || '');
                   }}
                 >
-                  <MaterialCommunityIcons name="pencil" size={14} color="#00D2FF" style={{ marginRight: 4 }} />
-                  <Text style={{ color: '#00D2FF', fontSize: 12, fontWeight: '700' }}>Edit Info</Text>
+                  <MaterialCommunityIcons name="pencil" size={14} color={theme.accent || "#00D2FF"} style={{ marginRight: 4 }} />
+                  <Text style={{ color: theme.accent || '#00D2FF', fontSize: 12, fontWeight: '700' }}>Edit Info</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -208,7 +215,7 @@ export default function WorkoutHistoryScreen({ navigation }: any) {
               return (
                 <View key={index} style={styles.exerciseRow}>
                   <Text style={styles.exerciseName}>{ex.name}</Text>
-                  <Text style={styles.exerciseDetails}>
+                  <Text style={[styles.exerciseDetails, { color: theme.accent || '#00D2FF' }]}>
                     {setsCount} sets • Top: {topWeight}kg
                   </Text>
                 </View>
@@ -216,10 +223,10 @@ export default function WorkoutHistoryScreen({ navigation }: any) {
             })}
             
             <TouchableOpacity 
-              style={{ marginTop: 20, backgroundColor: '#333', padding: 12, borderRadius: 8, alignItems: 'center' }}
+              style={{ marginTop: 20, backgroundColor: theme.accentSoftBg || '#333', borderColor: theme.accentBorder || '#444', borderWidth: 1, padding: 12, borderRadius: 8, alignItems: 'center' }}
               onPress={() => handleSaveAsPlan(item)}
             >
-              <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Save as Workout Routine</Text>
+              <Text style={{ color: theme.accent || '#FFF', fontWeight: 'bold' }}>Save as Workout Routine</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -228,7 +235,7 @@ export default function WorkoutHistoryScreen({ navigation }: any) {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.subCardBg || '#121212' }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <MaterialCommunityIcons name="arrow-left" size={28} color="white" />
@@ -247,7 +254,7 @@ export default function WorkoutHistoryScreen({ navigation }: any) {
           data={sortedHistory}
           keyExtractor={item => item.id}
           renderItem={renderItem}
-          contentContainerStyle={{ padding: 20 }}
+          contentContainerStyle={{ padding: 20, paddingBottom: bottomSpacing + 30 }}
         />
       )}
     </SafeAreaView>

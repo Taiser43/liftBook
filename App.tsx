@@ -7,11 +7,15 @@ import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import AppNavigator from './src/navigation/AppNavigator';
 import { GlobalXPOverlay } from './src/components/GlobalXPOverlay';
 import { resumePendingDownloadsIfNeeded } from './src/services/youtubeDownloadService';
+import { useMusicStore } from './src/store/useMusicStore';
 
 export default function App() {
   useEffect(() => {
     // Resume any pending or interrupted background/standby playlist downloads
     resumePendingDownloadsIfNeeded();
+
+    // Retroactively ensure all saved playlists, albums and songs have covers assigned and cached
+    useMusicStore.getState().retroactiveFillMissingCovers();
 
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {

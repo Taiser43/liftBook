@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLevelData } from '../utils/gamification';
 import { getAvailableMonths, calculateMonthlyReview } from '../utils/monthlyReviewEngine';
 import { resolveActiveNutritionTargets } from '../utils/dietPlanEngine';
+import { AccentThemeId } from '../utils/theme';
 
 export const getLocalDateString = () => {
   const d = new Date();
@@ -152,7 +153,7 @@ export interface DietPlan {
   targetFat?: number;
 }
 
-export type WidgetType = 'streak' | 'bodyweight' | 'workout' | 'nextMeal' | 'nutrition' | 'activity' | 'music' | 'supplements' | 'checkin';
+export type WidgetType = 'streak' | 'bodyweight' | 'workout' | 'nextMeal' | 'nutrition' | 'activity' | 'music' | 'supplements' | 'checkin' | 'arena';
 
 export interface WidgetContainer {
   id: string;
@@ -191,6 +192,7 @@ export interface SupplementLibraryItem {
   id: string;
   name: string;
   brand?: string;
+  barcode?: string;
   category: 'Daily Health' | 'Performance' | 'Recovery' | 'Vitamins' | string;
   imageUri?: string;
   unit: string; // e.g. 'capsule', 'scoop', 'g'
@@ -231,21 +233,6 @@ interface WeightEntry {
   date: string;
   weight: number;
 }
-
-export interface Quest {
-  id: string;
-  title: string;
-  description: string;
-  type: 'daily' | 'weekly';
-  goal: number;
-  progress: number;
-  rewardXP: number;
-  rewardCoins: number;
-  completed: boolean;
-  level: number;
-  completedCount: number;
-}
-
 
 export interface CustomAlertButton {
   text: string;
@@ -304,13 +291,13 @@ export interface AppState {
   toggleProgramActive: (id: string) => void;
 
   // Custom Exercises
-  customExercises: { name: string; category: string; equipmentType?: string; brand?: string }[];
+  customExercises: { name: string; category: string; targetMuscle?: string; equipmentType?: string; brand?: string }[];
   equipmentTypes: string[];
   equipmentBrands: string[];
   addEquipmentType: (type: string) => void;
   addEquipmentBrand: (brand: string) => void;
-  editCustomExercise: (oldName: string, exercise: { name: string; category: string; equipmentType?: string; brand?: string }) => void;
-  addCustomExercise: (exercise: { name: string; category: string; equipmentType?: string; brand?: string }) => void;
+  editCustomExercise: (oldName: string, exercise: { name: string; category: string; targetMuscle?: string; equipmentType?: string; brand?: string }) => void;
+  addCustomExercise: (exercise: { name: string; category: string; targetMuscle?: string; equipmentType?: string; brand?: string }) => void;
 
   // Workout History
   workoutHistory: CompletedWorkout[];
@@ -353,14 +340,8 @@ export interface AppState {
   levelUpData: { newLevel: number, totalXP: number } | null;
   setLevelUpData: (data: { newLevel: number, totalXP: number } | null) => void;
 
-  // New RPG Mechanics
-  fitCoins: number;
+  // Pinned Badges
   pinnedAchievements?: string[];
-  addFitCoins: (amount: number) => void;
-  spendFitCoins: (amount: number) => boolean;
-  restDayTokens: number;
-  addRestDayToken: () => void;
-  useRestDayToken: () => boolean;
   setPinnedAchievements: (badges: string[]) => void;
   
   // Flawless Months & Monthly Review
@@ -369,20 +350,6 @@ export interface AppState {
   recordFlawlessMonth: (monthKey: string) => void;
   setLastViewedMonthlyReview: (monthKey: string) => void;
   checkAndUpdateFlawlessMonths: () => void;
-
-  // Class XP
-  juggernautXP: number;
-  aestheticXP: number;
-  rangerXP: number;
-  monkXP: number;
-  addClassXP: (className: 'juggernaut' | 'aesthetic' | 'ranger' | 'monk', amount: number) => void;
-
-  // Quests
-  quests: { daily: Quest[], weekly: Quest[] };
-  freeRerollsLeft: number;
-  generateQuests: () => void;
-  rerollQuest: (questId: string, type: 'daily' | 'weekly') => void;
-  progressQuest: (questId: string, amount: number) => void;
 
   // Consumed Today
   consumedToday: { calories: number; protein: number; carbs: number; fat: number };
@@ -458,7 +425,9 @@ export interface AppState {
   
   hiddenExercises: string[];
   hidePreloadedExercise: (name: string) => void;
+  restorePreloadedExercise: (name: string) => void;
   deleteCustomExercise: (name: string) => void;
+  setExerciseDefault: (name: string, defaults: { weight?: number; reps?: number; isUnilateral?: boolean }) => void;
 
   // Global Live Workout State (Synced from TrainingScreen)
   globalActivePlan: WorkoutPlan | null;
@@ -472,12 +441,18 @@ export interface AppState {
   setGlobalWorkoutStartTime: (time: number | null) => void;
   setGlobalRestTimeLeft: (time: number | null) => void;
   setGlobalLiveWorkoutModalVisible: (visible: boolean) => void;
+  openBarcodeScannerOnMount: boolean;
+  setOpenBarcodeScannerOnMount: (visible: boolean) => void;
 
-  // Home Screen Layout
+  // Home Screen Layout & Theme
   homeLayout: WidgetContainer[];
   disabledWidgets: WidgetType[];
   updateHomeLayout: (layout: WidgetContainer[]) => void;
   setDisabledWidgets: (widgets: WidgetType[]) => void;
+  accentThemeId?: AccentThemeId;
+  setAccentThemeId: (id: AccentThemeId) => void;
+  geminiApiKey?: string;
+  setGeminiApiKey: (key: string) => void;
 
   // Global Cardio Mini-Player state
   globalCardioActive: boolean;
@@ -633,30 +608,82 @@ export const useAppStore = create<AppState>()(
       }),
       editCustomExercise: (oldName, exercise) => set((state) => {
         const filtered = (state.customExercises || []).filter(e => e.name !== oldName);
-        return { customExercises: [...filtered, exercise] };
+        const newCustom = [...filtered, exercise];
+
+        // If renamed, update defaults & plans
+        let updatedDefaults = state.exerciseDefaults;
+        if (oldName !== exercise.name && state.exerciseDefaults) {
+          updatedDefaults = { ...state.exerciseDefaults };
+          if (updatedDefaults[oldName]) {
+            updatedDefaults[exercise.name] = updatedDefaults[oldName];
+            delete updatedDefaults[oldName];
+          }
+        }
+
+        let updatedPrograms = state.workoutPrograms;
+        if (oldName !== exercise.name && state.workoutPrograms) {
+          updatedPrograms = state.workoutPrograms.map(prog => ({
+            ...prog,
+            workouts: (prog.workouts || []).map(w => ({
+              ...w,
+              exercises: (w.exercises || []).map(ex =>
+                ex.name.toLowerCase() === oldName.toLowerCase()
+                  ? { ...ex, name: exercise.name }
+                  : ex
+              )
+            }))
+          }));
+        }
+
+        setTimeout(() => {
+          try {
+            import('../engine/ironTactics/cardPoolEngine')
+              .then(m => m.resolveIronTacticsCardPool())
+              .catch(() => {});
+          } catch {
+            // ignore
+          }
+        }, 50);
+
+        return {
+          customExercises: newCustom,
+          exerciseDefaults: updatedDefaults,
+          workoutPrograms: updatedPrograms,
+        };
       }),
+      setExerciseDefault: (name, defaults) => set((state) => ({
+        exerciseDefaults: {
+          ...(state.exerciseDefaults || {}),
+          [name]: {
+            ...(state.exerciseDefaults?.[name] || { weight: 0, reps: 10 }),
+            ...defaults,
+          }
+        }
+      })),
       addCustomExercise: (exercise) => set((state) => {
         if ((state.customExercises || []).find(e => e.name.toLowerCase() === exercise.name.toLowerCase())) {
           return state;
         }
+        setTimeout(() => {
+          try {
+            import('../engine/ironTactics/cardPoolEngine')
+              .then(m => m.resolveIronTacticsCardPool())
+              .catch(() => {});
+          } catch {
+            // ignore
+          }
+        }, 50);
         return { customExercises: [...(state.customExercises || []), exercise] };
       }),
 
       workoutHistory: [],
       addCompletedWorkout: (workout) => set((state) => {
-        let juggernautGain = 0;
-        let aestheticGain = 0;
-
         const newExerciseDefaults = { ...(state.exerciseDefaults || {}) };
         workout.exercises.forEach(ex => {
           let lastWeight = 0;
           let lastReps = 0;
           const setsData: Array<{ weight: number; reps: number; repsRight?: number }> = [];
           ex.sets.forEach(set => {
-            juggernautGain += 10; // Base strength xp per set
-            if (set.reps >= 8 && set.reps <= 12) {
-              aestheticGain += 20; // Hypertrophy bonus
-            }
             if (set.weight > 0 || set.reps > 0) {
               lastWeight = set.weight;
               lastReps = set.reps;
@@ -683,43 +710,16 @@ export const useAppStore = create<AppState>()(
         const oldLevel = getLevelData(currentXP).level;
         const newLevel = getLevelData(newXP).level;
         let newLevelUpData = state.levelUpData;
-        let newFitCoins = state.fitCoins || 0;
 
         if (newLevel > oldLevel) {
           newLevelUpData = { newLevel, totalXP: newXP };
-          newFitCoins += 100; // Bonus coins on level up
         }
-
-        // Auto-progress any workout-related quests
-        let newDaily = [...(state.quests?.daily || [])];
-        let newWeekly = [...(state.quests?.weekly || [])];
-
-        const progressQuests = (q: Quest) => {
-          if (q.completed) return q;
-          if (q.title === 'Log a Workout' || q.title === 'Beast Slayer') {
-            const newProgress = Math.min(q.goal, q.progress + 1);
-            const completed = newProgress >= q.goal;
-            if (completed) {
-              newFitCoins += q.rewardCoins;
-              // we ignore quest XP here for simplicity of the placeholder, but coins are added
-            }
-            return { ...q, progress: newProgress, completed, completedCount: completed ? q.completedCount + 1 : q.completedCount };
-          }
-          return q;
-        };
-
-        newDaily = newDaily.map(progressQuests);
-        newWeekly = newWeekly.map(progressQuests);
 
         return {
           workoutHistory: [workout, ...(state.workoutHistory || [])],
           exerciseDefaults: newExerciseDefaults,
           totalXP: newXP,
           levelUpData: newLevelUpData,
-          juggernautXP: (state.juggernautXP || 0) + juggernautGain,
-          aestheticXP: (state.aestheticXP || 0) + aestheticGain,
-          fitCoins: newFitCoins,
-          quests: { daily: newDaily, weekly: newWeekly }
         };
       }),
       deleteCompletedWorkout: (id) => set((state) => ({
@@ -769,6 +769,8 @@ export const useAppStore = create<AppState>()(
       setGlobalWorkoutStartTime: (time) => set({ globalWorkoutStartTime: time }),
       setGlobalRestTimeLeft: (time) => set({ globalRestTimeLeft: time }),
       setGlobalLiveWorkoutModalVisible: (visible) => set({ globalLiveWorkoutModalVisible: visible }),
+      openBarcodeScannerOnMount: false,
+      setOpenBarcodeScannerOnMount: (visible) => set({ openBarcodeScannerOnMount: visible }),
 
       // Home Screen Layout
       homeLayout: [
@@ -950,6 +952,12 @@ export const useAppStore = create<AppState>()(
           if (newLevel > oldLevel) {
             newLevelUpData = { newLevel, totalXP: newTotalXP };
           }
+          try {
+            const { useIronTacticsMetaStore } = require('./useIronTacticsMetaStore');
+            useIronTacticsMetaStore.getState().claimFitnessAction('nutrition_hit');
+          } catch {
+            // ignore
+          }
         }
 
         history[lastEntryIndex] = lastEntry;
@@ -997,34 +1005,8 @@ export const useAppStore = create<AppState>()(
   triggerStreakConfetti: false,
   setTriggerStreakConfetti: (val: boolean) => set({ triggerStreakConfetti: val }),
   
-  fitCoins: 0,
-      pinnedAchievements: [],
-  addFitCoins: (amount) => set((state) => ({ fitCoins: (state.fitCoins || 0) + amount })),
-  spendFitCoins: (amount) => {
-    let success = false;
-    set((state) => {
-      if ((state.fitCoins || 0) >= amount) {
-        success = true;
-        return { fitCoins: (state.fitCoins || 0) - amount };
-      }
-      return state;
-    });
-    return success;
-  },
-  restDayTokens: 0,
-  addRestDayToken: () => set((state) => ({ restDayTokens: (state.restDayTokens || 0) + 1 })),
+  pinnedAchievements: [],
   setPinnedAchievements: (badges) => set({ pinnedAchievements: badges }),
-  useRestDayToken: () => {
-    let success = false;
-    set((state) => {
-      if ((state.restDayTokens || 0) > 0) {
-        success = true;
-        return { restDayTokens: (state.restDayTokens || 0) - 1 };
-      }
-      return state;
-    });
-    return success;
-  },
 
   // Flawless Months & Monthly Review
   flawlessMonths: [],
@@ -1049,99 +1031,6 @@ export const useAppStore = create<AppState>()(
       }
     });
   },
-
-  juggernautXP: 0,
-  aestheticXP: 0,
-  rangerXP: 0,
-  monkXP: 0,
-  addClassXP: (className, amount) => set((state) => ({
-    [`${className}XP`]: (state[`${className}XP`] || 0) + amount
-  }) as Partial<AppState>),
-
-  quests: { daily: [], weekly: [] },
-  freeRerollsLeft: 3,
-  generateQuests: () => set((state) => {
-    // Generate dummy quests for testing if empty
-    return {
-      quests: {
-        daily: [
-          { id: 'd1', title: 'Consume 150g Protein', description: 'Hit your protein goals', type: 'daily', goal: 150, progress: 0, rewardXP: 150, rewardCoins: 10, completed: false, level: 1, completedCount: 0 },
-          { id: 'd2', title: 'Log a Workout', description: 'Complete any workout today', type: 'daily', goal: 1, progress: 0, rewardXP: 200, rewardCoins: 15, completed: false, level: 1, completedCount: 0 },
-          { id: 'd3', title: '10,000 Steps', description: 'Stay active', type: 'daily', goal: 10000, progress: 0, rewardXP: 100, rewardCoins: 5, completed: false, level: 1, completedCount: 0 }
-        ],
-        weekly: [
-          { id: 'w1', title: 'Beast Slayer', description: 'Complete 4 Workouts this week', type: 'weekly', goal: 4, progress: 0, rewardXP: 1000, rewardCoins: 50, completed: false, level: 1, completedCount: 0 },
-          { id: 'w2', title: 'Perfect Nutrition', description: 'Hit macro goals 5 times this week', type: 'weekly', goal: 5, progress: 0, rewardXP: 800, rewardCoins: 40, completed: false, level: 1, completedCount: 0 }
-        ]
-      },
-      freeRerollsLeft: 3
-    };
-  }),
-  rerollQuest: (questId, type) => set((state) => {
-    const cost = 20;
-    let newFreeRerolls = state.freeRerollsLeft;
-    let newFitCoins = state.fitCoins;
-
-    if (newFreeRerolls > 0) {
-      newFreeRerolls--;
-    } else if (newFitCoins >= cost) {
-      newFitCoins -= cost;
-    } else {
-      return state; // not enough coins
-    }
-
-    const questPool = state.quests[type];
-    const newQuestPool = questPool.map(q => 
-      q.id === questId ? { ...q, title: 'Rerolled Quest', description: 'A new challenge awaits!', progress: 0, completed: false } : q
-    );
-
-    return {
-      freeRerollsLeft: newFreeRerolls,
-      fitCoins: newFitCoins,
-      quests: { ...state.quests, [type]: newQuestPool }
-    };
-  }),
-  progressQuest: (questId, amount) => set((state) => {
-    let newDaily = [...state.quests.daily];
-    let newWeekly = [...state.quests.weekly];
-    let addCoins = 0;
-    let addXPAmount = 0;
-
-    const updateQuest = (q: Quest) => {
-      if (q.id === questId && !q.completed) {
-        const newProgress = Math.min(q.goal, q.progress + amount);
-        const completed = newProgress >= q.goal;
-        if (completed) {
-          addCoins += q.rewardCoins;
-          addXPAmount += q.rewardXP;
-        }
-        return { ...q, progress: newProgress, completed, completedCount: completed ? q.completedCount + 1 : q.completedCount };
-      }
-      return q;
-    };
-
-    newDaily = newDaily.map(updateQuest);
-    newWeekly = newWeekly.map(updateQuest);
-
-    let newTotalXP = state.totalXP || 0;
-    let newLevelUpData = state.levelUpData;
-
-    if (addXPAmount > 0) {
-      const oldLevel = getLevelData(newTotalXP).level;
-      newTotalXP += addXPAmount;
-      const newLevel = getLevelData(newTotalXP).level;
-      if (newLevel > oldLevel) {
-        newLevelUpData = { newLevel, totalXP: newTotalXP };
-      }
-    }
-
-    return {
-      quests: { daily: newDaily, weekly: newWeekly },
-      fitCoins: (state.fitCoins || 0) + addCoins,
-      totalXP: newTotalXP,
-      levelUpData: newLevelUpData
-    };
-  }),
 
   levelUpData: null,
   setLevelUpData: (data) => set({ levelUpData: data }),
@@ -1472,7 +1361,7 @@ export const useAppStore = create<AppState>()(
           newCheckedItems[key] = true; // take
         }
 
-        // Update inventory in library
+        // Update inventory & stats in library
         const updatedLibrary = (state.supplementLibrary || []).map(item => {
           if (item.id === libraryItemId) {
             let newInventory = item.currentInventory;
@@ -1486,7 +1375,16 @@ export const useAppStore = create<AppState>()(
                 newInventory = Math.max(0, newInventory - unitsToChange);
               }
             }
-            return { ...item, currentInventory: newInventory };
+            const prevTaken = item.totalTakenTimes || 0;
+            const prevStreak = item.streak || 0;
+            const newTotalTaken = isCurrentlyTaken ? Math.max(0, prevTaken - 1) : prevTaken + 1;
+            const newStreak = isCurrentlyTaken ? Math.max(0, prevStreak - 1) : prevStreak + 1;
+            return {
+              ...item,
+              currentInventory: newInventory,
+              totalTakenTimes: newTotalTaken,
+              streak: newStreak,
+            };
           }
           return item;
         });
@@ -1515,9 +1413,16 @@ export const useAppStore = create<AppState>()(
       hidePreloadedExercise: (name) => set((state) => ({
         hiddenExercises: [...(state.hiddenExercises || []), name]
       })),
+      restorePreloadedExercise: (name) => set((state) => ({
+        hiddenExercises: (state.hiddenExercises || []).filter(n => n !== name)
+      })),
       deleteCustomExercise: (name) => set((state) => ({
         customExercises: (state.customExercises || []).filter(e => e.name !== name)
       })),
+      accentThemeId: 'cyan',
+      setAccentThemeId: (id) => set({ accentThemeId: id }),
+      geminiApiKey: '',
+      setGeminiApiKey: (key) => set({ geminiApiKey: key }),
     }),
     {
       name: 'pt-nutrition-storage',
@@ -1529,3 +1434,25 @@ export const useAppStore = create<AppState>()(
 export function showCustomAlert(title: string, message?: string, buttons?: CustomAlertButton[]) {
   useAppStore.getState().setCustomAlert({ title, message, buttons });
 }
+
+// Automatically sync nutrition changes to Android home screen widgets
+if (typeof setTimeout !== 'undefined') {
+  useAppStore.subscribe((state, prev) => {
+    if (
+      !prev ||
+      state.consumedToday !== prev.consumedToday ||
+      state.targets !== prev.targets ||
+      state.dailyTargetExtra !== prev.dailyTargetExtra ||
+      state.accentThemeId !== prev.accentThemeId ||
+      state.quickLogRecipeIds !== prev.quickLogRecipeIds ||
+      state.savedMeals !== prev.savedMeals
+    ) {
+      setTimeout(() => {
+        import('../widgets/widgetSyncService')
+          .then((m) => m.updateAllNutritionWidgets())
+          .catch(() => {});
+      }, 100);
+    }
+  });
+}
+

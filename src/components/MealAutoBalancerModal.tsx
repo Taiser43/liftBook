@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppStore, RecipeIngredient, showCustomAlert } from '../store/store';
 import { triggerSuccess, triggerLight } from '../utils/haptics';
 import { resolveActiveNutritionTargets, calculateAusgleichsMeal } from '../utils/dietPlanEngine';
+import { getAppTheme } from '../utils/theme';
 
 interface MealAutoBalancerModalProps {
   visible: boolean;
@@ -24,6 +25,8 @@ interface MealAutoBalancerModalProps {
 
 export default function MealAutoBalancerModal({ visible, onClose, targetMealId }: MealAutoBalancerModalProps) {
   const insets = useSafeAreaInsets();
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const {
     dietPlans,
     savedMeals,
@@ -176,9 +179,9 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={[styles.container, { paddingTop: Platform.OS === 'android' ? insets.top : 12 }]}>
+      <View style={[styles.container, { backgroundColor: theme.subCardBg || '#121212', paddingTop: Platform.OS === 'android' ? insets.top : 12 }]}>
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { borderBottomColor: theme.subtleBorder || '#242426' }]}>
           <View style={{ flex: 1 }}>
             <View style={styles.planBadge}>
               <MaterialCommunityIcons name="scale-balance" size={14} color="#FF9500" />
@@ -195,11 +198,11 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
 
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 40 }}>
           {/* Situation Card */}
-          <View style={styles.situationCard}>
+          <View style={[styles.situationCard, { backgroundColor: theme.cardBg || '#1C1C1E', borderColor: theme.cardBorder || '#2C2C2E' }]}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <View>
                 <Text style={styles.situationLabel}>NOCH OFFEN BIS ZUM TAGESZIEL:</Text>
-                <Text style={[styles.situationValue, remTotal < 0 && { color: '#FF453A' }]}>
+                <Text style={[styles.situationValue, { color: theme.accent || '#00D2FF' }, remTotal < 0 && { color: '#FF453A' }]}>
                   {remTotal >= 0 ? `${remTotal} kcal` : `+${Math.abs(remTotal)} kcal Überschuss`}
                 </Text>
               </View>
@@ -225,7 +228,11 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
                   return (
                     <TouchableOpacity
                       key={m.id}
-                      style={[styles.mealSelectChip, isSel && styles.mealSelectChipActive]}
+                      style={[
+                        styles.mealSelectChip, 
+                        { backgroundColor: theme.cardBg || '#1C1C1E', borderColor: theme.cardBorder || '#2C2C2E' },
+                        isSel && { backgroundColor: theme.accent || '#00D2FF', borderColor: theme.accent || '#00D2FF' }
+                      ]}
                       onPress={() => {
                         setSelectedMealId(m.id);
                         setSliderRatio(null);
@@ -265,7 +272,10 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
                   <Text style={styles.modeLabel}>BERECHNUNGS-MODUS:</Text>
                   <View style={styles.modeToggleRow}>
                     <TouchableOpacity
-                      style={[styles.modeToggleBtn, balanceMode === 'fullDay' && styles.modeToggleBtnActive]}
+                      style={[
+                        styles.modeToggleBtn, 
+                        balanceMode === 'fullDay' && { backgroundColor: theme.accent || '#00D2FF', borderColor: theme.accent || '#00D2FF' }
+                      ]}
                       onPress={() => {
                         setBalanceMode('fullDay');
                         setSliderRatio(null);
@@ -275,7 +285,7 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
                       <MaterialCommunityIcons
                         name="bullseye-arrow"
                         size={14}
-                        color={balanceMode === 'fullDay' ? '#000' : '#00D2FF'}
+                        color={balanceMode === 'fullDay' ? '#000' : (theme.accent || '#00D2FF')}
                       />
                       <Text style={[styles.modeToggleText, balanceMode === 'fullDay' && styles.modeToggleTextActive]}>
                         Voller Ausgleich ({remTotal} kcal)
@@ -283,7 +293,10 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.modeToggleBtn, balanceMode === 'deductPending' && styles.modeToggleBtnActive]}
+                      style={[
+                        styles.modeToggleBtn, 
+                        balanceMode === 'deductPending' && { backgroundColor: theme.accent || '#00D2FF', borderColor: theme.accent || '#00D2FF' }
+                      ]}
                       onPress={() => {
                         setBalanceMode('deductPending');
                         setSliderRatio(null);
@@ -304,11 +317,15 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
               )}
 
               {/* Dynamic Calculation Hero Banner */}
-              <View style={[styles.balancerHeroCard, balanceCalculation.isOverBudget && styles.balancerHeroCardOver]}>
+              <View style={[
+                styles.balancerHeroCard, 
+                { backgroundColor: theme.cardBg || '#161F24', borderColor: theme.accent || '#00D2FF' },
+                balanceCalculation.isOverBudget && styles.balancerHeroCardOver
+              ]}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <View style={{ flex: 1, paddingRight: 10 }}>
-                    <View style={styles.calcBadge}>
-                      <Text style={styles.calcBadgeText}>
+                    <View style={[styles.calcBadge, { backgroundColor: theme.accentSoftBg || '#00D2FF20' }]}>
+                      <Text style={[styles.calcBadgeText, { color: theme.accent || '#00D2FF' }]}>
                         {currentMeal.isBalancerMeal ? '⚖️ FESTGELEGTE AUSGLEICHS-MAHLZEIT' : 'GEWÄHLTE MAHLZEIT'}
                       </Text>
                     </View>
@@ -319,7 +336,7 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
                   </View>
 
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={[styles.ratioTag, balanceCalculation.isOverBudget && { color: '#FF453A' }]}>
+                    <Text style={[styles.ratioTag, { color: theme.accent || '#00D2FF' }, balanceCalculation.isOverBudget && { color: '#FF453A' }]}>
                       {balanceCalculation.effectiveRatio.toFixed(2)}x
                     </Text>
                     <Text style={styles.ratioPct}>
@@ -332,7 +349,7 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
                 <View style={styles.macroPillsRow}>
                   <View style={styles.macroPill}>
                     <Text style={styles.macroPillLabel}>KALORIEN</Text>
-                    <Text style={[styles.macroPillVal, { color: '#00D2FF' }]}>{balanceCalculation.scaledCal} kcal</Text>
+                    <Text style={[styles.macroPillVal, { color: theme.accent || '#00D2FF' }]}>{balanceCalculation.scaledCal} kcal</Text>
                     <Text style={styles.macroPillDiff}>
                       {balanceCalculation.scaledCal - balanceCalculation.origMealCal >= 0 ? '+' : ''}
                       {balanceCalculation.scaledCal - balanceCalculation.origMealCal} kcal
@@ -364,10 +381,10 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
               </View>
 
               {/* INTERACTIVE SLIDER / REGLER */}
-              <View style={styles.sliderCard}>
+              <View style={[styles.sliderCard, { backgroundColor: theme.cardBg || '#1C1C1E', borderColor: theme.cardBorder || '#2C2C2E' }]}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                   <Text style={styles.sliderCardTitle}>PORTIONS-REGLER (INTERAKTIV)</Text>
-                  <Text style={styles.sliderCurrentText}>
+                  <Text style={[styles.sliderCurrentText, { color: theme.accent || '#00D2FF' }]}>
                     {balanceCalculation.effectiveRatio.toFixed(2)}x ({balanceCalculation.scaledCal} kcal)
                   </Text>
                 </View>
@@ -381,9 +398,9 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
                   onValueChange={(val) => {
                     setSliderRatio(val);
                   }}
-                  minimumTrackTintColor="#00D2FF"
+                  minimumTrackTintColor={theme.accent || "#00D2FF"}
                   maximumTrackTintColor="#333333"
-                  thumbTintColor="#00D2FF"
+                  thumbTintColor={theme.accent || "#00D2FF"}
                 />
 
                 {/* Quick Selection Buttons */}
@@ -392,7 +409,7 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
                     <TouchableOpacity
                       style={[
                         styles.quickChip,
-                        Math.abs(balanceCalculation.effectiveRatio - balanceCalculation.idealRatio) < 0.03 && styles.quickChipActive
+                        Math.abs(balanceCalculation.effectiveRatio - balanceCalculation.idealRatio) < 0.03 && { backgroundColor: theme.accentSoftBg || '#00D2FF25', borderColor: theme.accent || '#00D2FF' }
                       ]}
                       onPress={() => {
                         setSliderRatio(null);
@@ -401,7 +418,7 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
                     >
                       <Text style={[
                         styles.quickChipText,
-                        Math.abs(balanceCalculation.effectiveRatio - balanceCalculation.idealRatio) < 0.03 && styles.quickChipTextActive
+                        Math.abs(balanceCalculation.effectiveRatio - balanceCalculation.idealRatio) < 0.03 && { color: theme.accent || '#00D2FF', fontWeight: '900' }
                       ]}>
                         🎯 Perfekter Ausgleich ({balanceCalculation.budget} kcal)
                       </Text>
@@ -411,7 +428,7 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
                   <TouchableOpacity
                     style={[
                       styles.quickChip,
-                      Math.abs(balanceCalculation.effectiveRatio - 1.0) < 0.03 && styles.quickChipActive
+                      Math.abs(balanceCalculation.effectiveRatio - 1.0) < 0.03 && { backgroundColor: theme.accentSoftBg || '#00D2FF25', borderColor: theme.accent || '#00D2FF' }
                     ]}
                     onPress={() => {
                       setSliderRatio(1.0);
@@ -420,7 +437,7 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
                   >
                     <Text style={[
                       styles.quickChipText,
-                      Math.abs(balanceCalculation.effectiveRatio - 1.0) < 0.03 && styles.quickChipTextActive
+                      Math.abs(balanceCalculation.effectiveRatio - 1.0) < 0.03 && { color: theme.accent || '#00D2FF', fontWeight: '900' }
                     ]}>
                       1.0x Plan ({balanceCalculation.origMealCal} kcal)
                     </Text>
@@ -452,17 +469,17 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
               <View style={{ marginTop: 20 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                   <Text style={styles.sectionTitle}>Zutatenmengen zum Kochen (grammgenau):</Text>
-                  <Text style={styles.subHint}>Auf Küchenwaage abwiegen</Text>
+                  <Text style={[styles.subHint, { color: theme.accent || '#00D2FF' }]}>Auf Küchenwaage abwiegen</Text>
                 </View>
 
                 {balanceCalculation.scaledIngredients.map((ing, idx) => (
-                  <View key={ing.ingredient.id || idx} style={styles.ingredientRow}>
+                  <View key={ing.ingredient.id || idx} style={[styles.ingredientRow, { backgroundColor: theme.cardBg || '#1C1C1E', borderColor: theme.cardBorder || '#2C2C2E' }]}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.ingName}>{ing.ingredient.name}</Text>
                       <Text style={styles.ingOrigText}>Plan-Original: {ing.originalAmount}g</Text>
                     </View>
-                    <View style={styles.scaledGramBadge}>
-                      <Text style={styles.scaledGramText}>{ing.scaledAmount} g</Text>
+                    <View style={[styles.scaledGramBadge, { backgroundColor: theme.accentSoftBg || '#00D2FF20', borderColor: theme.accentBorder || '#00D2FF40' }]}>
+                      <Text style={[styles.scaledGramText, { color: theme.accent || '#00D2FF' }]}>{ing.scaledAmount} g</Text>
                     </View>
                   </View>
                 ))}
@@ -472,6 +489,7 @@ export default function MealAutoBalancerModal({ visible, onClose, targetMealId }
               <TouchableOpacity
                 style={[
                   styles.logBtn,
+                  { backgroundColor: theme.accent || '#00D2FF', shadowColor: theme.accent || '#00D2FF' },
                   balanceCalculation.isOverBudget && remTotal <= 0 && styles.logBtnDisabled
                 ]}
                 onPress={handleLogBalancedMeal}

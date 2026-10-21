@@ -15,7 +15,8 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ingredient } from '../store/store';
+import { Ingredient, useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 
 interface BarcodeScannerModalProps {
   visible: boolean;
@@ -32,6 +33,8 @@ export default function BarcodeScannerModal({
   onIngredientFound
 }: BarcodeScannerModalProps) {
   const insets = useSafeAreaInsets();
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const [permission, requestPermission] = useCameraPermissions();
 
   const [scanned, setScanned] = useState(false);
@@ -135,7 +138,7 @@ export default function BarcodeScannerModal({
             <MaterialCommunityIcons 
               name={torch ? 'flash' : 'flash-off'} 
               size={26} 
-              color={torch ? '#00D2FF' : '#FFFFFF'} 
+              color={torch ? (theme.accent || '#00D2FF') : '#FFFFFF'} 
             />
           </TouchableOpacity>
         </View>
@@ -147,13 +150,13 @@ export default function BarcodeScannerModal({
             <Text style={styles.permissionSubtitle}>
               Please grant camera permissions to scan EAN barcodes.
             </Text>
-            <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
+            <TouchableOpacity style={[styles.permissionBtn, { backgroundColor: theme.accent || '#00D2FF' }]} onPress={requestPermission}>
               <Text style={styles.permissionBtnText}>Enable Camera</Text>
             </TouchableOpacity>
           </View>
         ) : manualInputVisible ? (
           <View style={styles.manualModalBackdrop}>
-            <View style={styles.manualModalCard}>
+            <View style={[styles.manualModalCard, { backgroundColor: theme.cardBg || '#1E1E20', borderColor: theme.cardBorder || '#303036' }]}>
               <View style={styles.manualModalHeader}>
                 <Text style={styles.manualModalTitle}>Manual Entry</Text>
                 <TouchableOpacity onPress={() => setManualInputVisible(false)}>
@@ -170,7 +173,7 @@ export default function BarcodeScannerModal({
                 onChangeText={setManualBarcode}
                 autoFocus
               />
-              <TouchableOpacity style={styles.manualSearchBtn} onPress={handleManualSearch}>
+              <TouchableOpacity style={[styles.manualSearchBtn, { backgroundColor: theme.accent || '#00D2FF' }]} onPress={handleManualSearch}>
                 <Text style={styles.manualSearchBtnText}>Lookup Barcode</Text>
               </TouchableOpacity>
             </View>
@@ -190,17 +193,17 @@ export default function BarcodeScannerModal({
             <View style={styles.overlayCenterRow}>
               <View style={styles.overlaySide} />
               <View style={styles.scanBox}>
-                <View style={[styles.cornerMarker, styles.cornerTL]} />
-                <View style={[styles.cornerMarker, styles.cornerTR]} />
-                <View style={[styles.cornerMarker, styles.cornerBL]} />
-                <View style={[styles.cornerMarker, styles.cornerBR]} />
+                <View style={[styles.cornerMarker, styles.cornerTL, { borderColor: theme.accent || '#00D2FF' }]} />
+                <View style={[styles.cornerMarker, styles.cornerTR, { borderColor: theme.accent || '#00D2FF' }]} />
+                <View style={[styles.cornerMarker, styles.cornerBL, { borderColor: theme.accent || '#00D2FF' }]} />
+                <View style={[styles.cornerMarker, styles.cornerBR, { borderColor: theme.accent || '#00D2FF' }]} />
                 {!scanned && (
-                  <Animated.View style={[styles.laserLine, { transform: [{ translateY: laserAnim }] }]} />
+                  <Animated.View style={[styles.laserLine, { backgroundColor: theme.accent || '#00D2FF', shadowColor: theme.accent || '#00D2FF' }, { transform: [{ translateY: laserAnim }] }]} />
                 )}
                 {loading && (
                   <View style={styles.scanLoadingOverlay}>
-                    <ActivityIndicator size="large" color="#00D2FF" />
-                    <Text style={styles.scanLoadingText}>Looking up...</Text>
+                    <ActivityIndicator size="large" color={theme.accent || "#00D2FF"} />
+                    <Text style={[styles.scanLoadingText, { color: theme.accent || "#00D2FF" }]}>Looking up...</Text>
                   </View>
                 )}
               </View>
@@ -216,11 +219,11 @@ export default function BarcodeScannerModal({
               )}
               <View style={styles.bottomControls}>
                 <TouchableOpacity 
-                  style={styles.manualEntryPill} 
+                  style={[styles.manualEntryPill, { borderColor: theme.cardBorder || '#303036' }]} 
                   onPress={() => setManualInputVisible(true)}
                 >
-                  <MaterialCommunityIcons name="keyboard" size={20} color="#00D2FF" />
-                  <Text style={styles.manualEntryPillText}>Enter Manually</Text>
+                  <MaterialCommunityIcons name="keyboard" size={20} color={theme.accent || "#00D2FF"} />
+                  <Text style={[styles.manualEntryPillText, { color: theme.accent || '#00D2FF' }]}>Enter Manually</Text>
                 </TouchableOpacity>
                 {scanned && !loading && errorMsg && (
                   <TouchableOpacity style={styles.scanAgainBtn} onPress={() => {

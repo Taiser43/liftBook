@@ -1,4 +1,4 @@
-const { withAppBuildGradle, withDangerousMod } = require('@expo/config-plugins');
+const { withAppBuildGradle, withDangerousMod, withAndroidManifest } = require('@expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
 
@@ -38,5 +38,37 @@ module.exports = function withDevAppVariant(config) {
     },
   ]);
 
+  // 3. Ensure widget receivers are exported=true (required by Android Launcher) and support .dev variant
+  config = withAndroidManifest(config, (config) => {
+    const mainApp = config.modResults.manifest.application?.[0];
+    if (mainApp && Array.isArray(mainApp.receiver)) {
+      mainApp.receiver.forEach((receiver) => {
+        if (receiver.$ && typeof receiver.$['android:name'] === 'string' && receiver.$['android:name'].includes('Nutrition')) {
+          // Android Launcher needs exported=true to display and bind widgets in the picker
+          receiver.$['android:exported'] = 'true';
+
+          // Fully qualify class name so applicationIdSuffix (".dev") resolves the Java class correctly
+          if (receiver.$['android:name'].startsWith('.')) {
+            receiver.$['android:name'] = 'com.taiser.ptnutritionapp' + receiver.$['android:name'];
+          }
+        }
+
+        if (Array.isArray(receiver['intent-filter'])) {
+          receiver['intent-filter'].forEach((filter) => {
+            if (Array.isArray(filter.action)) {
+              filter.action.forEach((act) => {
+                if (act.$ && typeof act.$['android:name'] === 'string' && act.$['android:name'].endsWith('.WIDGET_CLICK')) {
+                  act.$['android:name'] = '${applicationId}.WIDGET_CLICK';
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+    return config;
+  });
+
   return config;
 };
+

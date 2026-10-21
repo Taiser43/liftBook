@@ -1,7 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, Switch } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Switch, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMusicStore } from '../store/useMusicStore';
+import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 import Slider from '@react-native-community/slider';
 
 interface Props {
@@ -11,7 +13,8 @@ interface Props {
 }
 
 export default function MusicSettingsModal({ visible, onClose, onOpenYouTubeDownloader }: Props) {
-  
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const { addPlaylist } = useMusicStore();
   
   const handleImport = async () => {
@@ -46,7 +49,7 @@ export default function MusicSettingsModal({ visible, onClose, onOpenYouTubeDown
   return (
     <Modal visible={visible} animationType="slide" transparent={true}>
       <View style={styles.container}>
-        <View style={styles.card}>
+        <View style={[styles.card, { backgroundColor: theme.cardBg, borderTopWidth: 1, borderColor: theme.cardBorder }]}>
           <View style={styles.header}>
             <Text style={styles.title}>Audio Settings</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -57,7 +60,7 @@ export default function MusicSettingsModal({ visible, onClose, onOpenYouTubeDown
           <View style={styles.section}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={styles.label}>Crossfade (seconds)</Text>
-              <Text style={styles.valueText}>{crossfadeSeconds}s</Text>
+              <Text style={[styles.valueText, { color: theme.accent }]}>{crossfadeSeconds}s</Text>
             </View>
             <Slider
               style={{ width: '100%', height: 40 }}
@@ -66,9 +69,9 @@ export default function MusicSettingsModal({ visible, onClose, onOpenYouTubeDown
               step={1}
               value={crossfadeSeconds}
               onValueChange={setCrossfadeSeconds}
-              minimumTrackTintColor="#00D2FF"
+              minimumTrackTintColor={theme.accent}
               maximumTrackTintColor="#333"
-              thumbTintColor="#00D2FF"
+              thumbTintColor={theme.accent}
             />
             <Text style={styles.hint}>Fade between songs for gapless playback</Text>
           </View>
@@ -81,7 +84,7 @@ export default function MusicSettingsModal({ visible, onClose, onOpenYouTubeDown
               style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#333', padding: 16, borderRadius: 12, marginTop: 8 }}
               onPress={handleImport}
             >
-              <MaterialCommunityIcons name="folder-download" size={24} color="#00D2FF" style={{ marginRight: 12 }} />
+              <MaterialCommunityIcons name="folder-download" size={24} color={theme.accent} style={{ marginRight: 12 }} />
               <Text style={{ color: '#FFF', fontSize: 16, fontWeight: 'bold' }}>Import MP3s from Device</Text>
             </TouchableOpacity>
 
@@ -95,6 +98,23 @@ export default function MusicSettingsModal({ visible, onClose, onOpenYouTubeDown
             >
               <MaterialCommunityIcons name="youtube" size={24} color="#FF0000" style={{ marginRight: 12 }} />
               <Text style={{ color: '#FFF', fontSize: 16, fontWeight: 'bold' }}>YouTube Playlist herunterladen</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#333', padding: 16, borderRadius: 12, marginTop: 10 }}
+              onPress={async () => {
+                const res = await useMusicStore.getState().retroactiveFillMissingCovers();
+                Alert.alert(
+                  "Cover aktualisiert! 🎨",
+                  `Es wurden ${res.updatedSongs} Songs und ${res.updatedPlaylists} Playlists mit Covers ausgestattet.`
+                );
+              }}
+            >
+              <MaterialCommunityIcons name="image-sync" size={24} color="#30D158" style={{ marginRight: 12 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#FFF', fontSize: 16, fontWeight: 'bold' }}>Song- & Playlist-Cover reparieren</Text>
+                <Text style={{ color: '#888', fontSize: 12, marginTop: 2 }}>Trägt fehlende Cover rückwirkend für alle Lieder nach</Text>
+              </View>
             </TouchableOpacity>
           </View>
 

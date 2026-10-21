@@ -9,6 +9,7 @@ import {
   TouchableOpacity, 
   Dimensions,
   Platform,
+  StatusBar,
   Vibration,
   Linking
 } from 'react-native';
@@ -32,6 +33,9 @@ import { getSevenDayWeightStats } from '../utils/checkInEngine';
 import { MonthlyReviewModal } from '../components/MonthlyReviewModal';
 import { resolveActiveNutritionTargets } from '../utils/dietPlanEngine';
 import { triggerLight } from '../utils/haptics';
+import { IronTacticsWidget } from '../components/ironTactics/IronTacticsWidget';
+import { getAppTheme } from '../utils/theme';
+import AccentThemePickerModal from '../components/AccentThemePickerModal';
 
 type TimeRange = '1W' | '1M' | '1Y' | 'ALL';
 
@@ -76,13 +80,17 @@ export default function HomeScreen({ navigation }: any) {
     supplementIntakeLog,
     toggleSupplementIntake,
     flawlessMonths,
+    accentThemeId,
   } = useAppStore();
+
+  const theme = getAppTheme(accentThemeId);
+  const [themePickerVisible, setThemePickerVisible] = useState(false);
 
   const [homeReviewModalVisible, setHomeReviewModalVisible] = useState(false);
 
   React.useEffect(() => {
     // Auto-inject new widgets that are not disabled and not in layout
-    const allKnownWidgets: import('../store/store').WidgetType[] = ['streak', 'bodyweight', 'workout', 'nextMeal', 'nutrition', 'activity', 'music', 'supplements', 'checkin'];
+    const allKnownWidgets: import('../store/store').WidgetType[] = ['streak', 'bodyweight', 'workout', 'arena', 'nextMeal', 'nutrition', 'activity', 'music', 'supplements', 'checkin'];
     const currentWidgetsInLayout = homeLayout.flatMap(c => c.widgets);
     const missingWidgets = allKnownWidgets.filter(w => !currentWidgetsInLayout.includes(w) && !(disabledWidgets || []).includes(w));
     
@@ -371,23 +379,23 @@ export default function HomeScreen({ navigation }: any) {
     switch (type) {
       case 'streak':
         return (
-          <View style={[styles.unifiedStreakCard, { width: containerWidth, marginHorizontal: 0, paddingHorizontal: 16 }]} key="streak">
+          <View style={[styles.unifiedStreakCard, { width: containerWidth, marginHorizontal: 0, paddingHorizontal: 16, backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} key="streak">
             <View style={styles.masterStreakRow}>
-              <MaterialCommunityIcons name="crown" size={32} color={(streaks.workedOutToday && streaks.hitNutritionToday) ? "#00D2FF" : "#333"} />
+              <MaterialCommunityIcons name="crown" size={32} color={(streaks.workedOutToday && streaks.hitNutritionToday) ? theme.accent : "#333"} />
               <View style={{ marginLeft: 16, flex: 1 }}>
                 <Text style={styles.masterStreakNum}>{streaks.overall}</Text>
-                <Text style={styles.masterStreakTitle}>MASTER STREAK</Text>
+                <Text style={[styles.masterStreakTitle, { color: theme.accent }]}>MASTER STREAK</Text>
               </View>
-              <View style={[styles.masterBadge, (streaks.workedOutToday && streaks.hitNutritionToday) && styles.masterBadgeActive]}>
+              <View style={[styles.masterBadge, (streaks.workedOutToday && streaks.hitNutritionToday) && [styles.masterBadgeActive, { backgroundColor: theme.accent }]]}>
                 <Text style={[styles.masterBadgeText, (streaks.workedOutToday && streaks.hitNutritionToday) && { color: '#000' }]}>
                   {(streaks.workedOutToday && streaks.hitNutritionToday) ? 'LOCKED TODAY' : 'PENDING'}
                 </Text>
               </View>
             </View>
 
-            <View style={styles.subStreaksRow}>
+            <View style={[styles.subStreaksRow, { backgroundColor: theme.subCardBg, borderWidth: 1, borderColor: theme.subtleBorder }]}>
               <View style={styles.subStreak}>
-                <MaterialCommunityIcons name="weight-lifter" size={20} color={streaks.workedOutToday ? "#00D2FF" : "#666"} />
+                <MaterialCommunityIcons name="weight-lifter" size={20} color={streaks.workedOutToday ? theme.accent : "#666"} />
                 <Text style={styles.subStreakVal}>{streaks.training} <Text style={styles.subStreakLabel}>Training</Text></Text>
               </View>
               <View style={styles.subStreakDivider} />
@@ -399,13 +407,13 @@ export default function HomeScreen({ navigation }: any) {
 
             {/* Flawless Months & Review Row */}
             <TouchableOpacity
-              style={styles.homeFlawlessRow}
+              style={[styles.homeFlawlessRow, { backgroundColor: theme.subCardBg, borderColor: theme.accent }]}
               activeOpacity={0.8}
               onPress={() => setHomeReviewModalVisible(true)}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={{ fontSize: 13, marginRight: 6 }}>💎</Text>
-                <Text style={styles.homeFlawlessText}>
+                <Text style={[styles.homeFlawlessText, { color: theme.accent }]}>
                   {(flawlessMonths || []).length} Makellose Monate
                 </Text>
               </View>
@@ -518,7 +526,7 @@ export default function HomeScreen({ navigation }: any) {
           : `Ø ${Math.abs(dailyRateGrams)}g/Tag`;
 
         return (
-          <View style={[styles.card, { width: containerWidth, marginHorizontal: 0 }]} key="bodyweight">
+          <View style={[styles.card, { width: containerWidth, marginHorizontal: 0, backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} key="bodyweight">
             <View style={styles.cardHeaderRow}>
               <View>
                 <Text style={styles.cardSubtitle}>CURRENT BODYWEIGHT</Text>
@@ -553,7 +561,7 @@ export default function HomeScreen({ navigation }: any) {
                     setIsEditingWeight(true);
                   }}
                 >
-                  <MaterialCommunityIcons name="pencil" size={16} color="#00D2FF" />
+                  <MaterialCommunityIcons name="pencil" size={16} color={theme.accent} />
                   <Text style={styles.editBtnText}>Log</Text>
                 </TouchableOpacity>
               )}
@@ -562,7 +570,7 @@ export default function HomeScreen({ navigation }: any) {
             {/* Period Average & Trend Marker */}
             {weightHistory.length > 0 && (
               <TouchableOpacity 
-                style={styles.weightTrendCard}
+                style={[styles.weightTrendCard, { backgroundColor: theme.subCardBg, borderColor: theme.subtleBorder }]}
                 activeOpacity={0.8}
                 onPress={() => {
                   triggerLight();
@@ -571,7 +579,7 @@ export default function HomeScreen({ navigation }: any) {
               >
                 <View style={styles.weightTrendRow}>
                   <View style={styles.weightTrendLeft}>
-                    <MaterialCommunityIcons name="scale-bathroom" size={18} color="#00D2FF" />
+                    <MaterialCommunityIcons name="scale-bathroom" size={18} color={theme.accent} />
                     <View style={{ marginLeft: 8 }}>
                       <Text style={styles.weightTrendTitle}>{periodTitle}</Text>
                       <Text style={styles.weightTrendAvgNum}>
@@ -591,7 +599,7 @@ export default function HomeScreen({ navigation }: any) {
                       style={[
                         styles.weightTrendBadge,
                         isPositive
-                          ? styles.weightTrendBadgeUp
+                          ? [styles.weightTrendBadgeUp, { backgroundColor: theme.accentBgSoft, borderColor: theme.accentBorderSoft }]
                           : isNegative
                           ? styles.weightTrendBadgeDown
                           : styles.weightTrendBadgeNeutral
@@ -608,7 +616,7 @@ export default function HomeScreen({ navigation }: any) {
                         size={15}
                         color={
                           isPositive
-                            ? '#00D2FF'
+                            ? theme.accent
                             : isNegative
                             ? '#FF9500'
                             : '#888888'
@@ -618,7 +626,7 @@ export default function HomeScreen({ navigation }: any) {
                         styles.weightTrendBadgeText,
                         {
                           color: isPositive
-                            ? '#00D2FF'
+                            ? theme.accent
                             : isNegative
                             ? '#FF9500'
                             : '#888888'
@@ -650,14 +658,14 @@ export default function HomeScreen({ navigation }: any) {
             )}
 
             {/* Time range selector pills */}
-            <View style={styles.rangeSelector}>
+            <View style={[styles.rangeSelector, { backgroundColor: theme.subCardBg }]}>
               {(['1W', '1M', '1Y', 'ALL'] as TimeRange[]).map(range => (
                 <TouchableOpacity 
                   key={range} 
-                  style={[styles.rangePill, timeRange === range && styles.rangePillActive]}
+                  style={[styles.rangePill, timeRange === range && [styles.rangePillActive, { backgroundColor: theme.accentBgSoft }]]}
                   onPress={() => setTimeRange(range)}
                 >
-                  <Text style={[styles.rangePillText, timeRange === range && styles.rangePillTextActive]}>{range}</Text>
+                  <Text style={[styles.rangePillText, timeRange === range && [styles.rangePillTextActive, { color: theme.accent }]]}>{range}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -683,13 +691,13 @@ export default function HomeScreen({ navigation }: any) {
                     showCustomAlert("Weight Log", `Date: ${date}\nWeight: ${value} kg`);
                   }}
                   chartConfig={{
-                    backgroundColor: '#111214',
-                    backgroundGradientFrom: '#111214',
-                    backgroundGradientTo: '#111214',
+                    backgroundColor: theme.cardBg,
+                    backgroundGradientFrom: theme.cardBg,
+                    backgroundGradientTo: theme.cardBg,
                     decimalPlaces: 1,
-                    color: (opacity = 1) => `rgba(0, 210, 255, ${opacity})`,
+                    color: (opacity = 1) => `rgba(${theme.accentRgb}, ${opacity})`,
                     labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-                    propsForDots: { r: '3', strokeWidth: '1', stroke: '#00D2FF' }
+                    propsForDots: { r: '3', strokeWidth: '1', stroke: theme.accent }
                   }}
                   bezier
                   style={{ borderRadius: 16, marginTop: 16, transform: [{ translateX: -10 }] }}
@@ -709,7 +717,7 @@ export default function HomeScreen({ navigation }: any) {
       case 'workout':
         return (
           <TouchableOpacity 
-            style={[styles.card, { width: containerWidth, marginHorizontal: 0 }]} 
+            style={[styles.card, { width: containerWidth, marginHorizontal: 0, backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} 
             activeOpacity={todaysPlan ? 0.9 : 1}
             onPress={handleStartTodayWorkout}
             key="workout"
@@ -727,7 +735,7 @@ export default function HomeScreen({ navigation }: any) {
               <View>
                 <View style={styles.trainingInfoRow}>
                   <View style={styles.trainingIconCircle}>
-                    <MaterialCommunityIcons name="dumbbell" size={24} color="#00D2FF" />
+                    <MaterialCommunityIcons name="dumbbell" size={24} color={theme.accent} />
                   </View>
                   <View style={{ marginLeft: 12, flex: 1 }}>
                     <Text style={styles.trainingPlanTitle}>{todaysPlan.name}</Text>
@@ -761,11 +769,11 @@ export default function HomeScreen({ navigation }: any) {
       case 'nextMeal':
         if (!activeDietPlan) return null;
         return (
-          <View style={[styles.card, { width: containerWidth, marginHorizontal: 0 }]} key="nextMeal">
+          <View style={[styles.card, { width: containerWidth, marginHorizontal: 0, backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} key="nextMeal">
             <View style={styles.cardHeaderRow}>
               <Text style={styles.cardSubtitle}>NEXT MEAL</Text>
-              <View style={[styles.statusBadge, { backgroundColor: nextScheduledMeal ? 'rgba(0, 210, 255, 0.15)' : '#282828' }]}>
-                <Text style={[styles.statusBadgeText, { color: nextScheduledMeal ? '#00D2FF' : '#888888' }]}>
+              <View style={[styles.statusBadge, { backgroundColor: nextScheduledMeal ? theme.accentBgSoft : '#282828' }]}>
+                <Text style={[styles.statusBadgeText, { color: nextScheduledMeal ? theme.accent : '#888888' }]}>
                   {nextScheduledMeal ? nextScheduledMeal.time : 'All Done'}
                 </Text>
               </View>
@@ -827,7 +835,7 @@ export default function HomeScreen({ navigation }: any) {
 
       case 'nutrition':
         return (
-          <View style={[styles.card, { width: containerWidth, marginHorizontal: 0 }]} key="nutrition">
+          <View style={[styles.card, { width: containerWidth, marginHorizontal: 0, backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} key="nutrition">
             <View style={styles.cardHeaderRow}>
               <Text style={styles.cardSubtitle}>NUTRITION PROGRESS</Text>
               <TouchableOpacity style={styles.addRecipePill} activeOpacity={0.8} onPress={() => setRecipeModalVisible(true)}>
@@ -844,7 +852,7 @@ export default function HomeScreen({ navigation }: any) {
                   <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>{consumedToday.calories}</Text> / {activeTargets.calories} kcal
                 </Text>
               </View>
-              {renderProgressBar(consumedToday.calories, activeTargets.calories, '#00D2FF')}
+              {renderProgressBar(consumedToday.calories, activeTargets.calories, theme.accent)}
             </View>
 
             <View style={styles.macroBlock}>
@@ -854,7 +862,7 @@ export default function HomeScreen({ navigation }: any) {
                   <Text style={{ fontWeight: '800', color: '#FFFFFF' }}>{consumedToday.protein}</Text> / {activeTargets.protein} g
                 </Text>
               </View>
-              {renderProgressBar(consumedToday.protein, activeTargets.protein, '#00D2FF')}
+              {renderProgressBar(consumedToday.protein, activeTargets.protein, theme.accent)}
             </View>
 
             <View style={styles.macroBlock}>
@@ -878,7 +886,7 @@ export default function HomeScreen({ navigation }: any) {
             </View>
 
             {/* Quick Log Meals */}
-            <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#2C2C2E' }}>
+            <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: theme.subtleBorder }}>
               <Text style={[styles.cardSubtitle, { marginBottom: 12 }]}>QUICK LOG RECIPES</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
                 {[0, 1, 2, 3].map(slotIndex => {
@@ -889,7 +897,7 @@ export default function HomeScreen({ navigation }: any) {
                     return (
                       <TouchableOpacity 
                         key={`empty-${slotIndex}`} 
-                        style={styles.quickLogSlotEmpty}
+                        style={[styles.quickLogSlotEmpty, { backgroundColor: theme.subCardBg, borderColor: theme.subtleBorder }]}
                         onPress={() => {
                           setQuickLogSlotToEdit(slotIndex);
                           setRecipeModalVisible(true);
@@ -925,7 +933,7 @@ export default function HomeScreen({ navigation }: any) {
                          <View style={styles.quickLogSlotOverlay} />
                        </View>
                        <Text style={styles.quickLogSlotTitle} numberOfLines={2}>{recipe.name}</Text>
-                       <Text style={styles.quickLogSlotMacros}>{Math.round(recipe.calories / (recipe.totalServings || 1))} kcal</Text>
+                       <Text style={[styles.quickLogSlotMacros, { color: theme.accent }]}>{Math.round(recipe.calories / (recipe.totalServings || 1))} kcal</Text>
                        <TouchableOpacity 
                          style={{ position: 'absolute', top: 4, right: 4, padding: 4, zIndex: 10 }}
                          onPress={() => {
@@ -946,7 +954,7 @@ export default function HomeScreen({ navigation }: any) {
 
       case 'activity':
         return (
-          <View style={[styles.activityCard, { width: containerWidth, marginHorizontal: 0 }]} key="activity">
+          <View style={[styles.activityCard, { width: containerWidth, marginHorizontal: 0, backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]} key="activity">
             <View style={styles.activityHeader}>
               <MaterialCommunityIcons name="watch" size={20} color={healthConnected ? '#30D158' : '#888'} />
               <Text style={styles.activityTitle}>Activity (Health Connect)</Text>
@@ -956,27 +964,27 @@ export default function HomeScreen({ navigation }: any) {
                 style={{
                   flexDirection: 'row',
                   alignItems: 'center',
-                  backgroundColor: healthConnected ? 'rgba(48, 209, 88, 0.12)' : 'rgba(0, 210, 255, 0.12)',
+                  backgroundColor: healthConnected ? 'rgba(48, 209, 88, 0.12)' : theme.accentBgSoft,
                   paddingHorizontal: 10,
                   paddingVertical: 5,
                   borderRadius: 10,
                   borderWidth: 1,
-                  borderColor: healthConnected ? '#30D158' : '#00D2FF',
+                  borderColor: healthConnected ? '#30D158' : theme.accent,
                 }}
               >
                 <MaterialCommunityIcons 
                   name={healthConnected ? 'check-circle' : 'link-variant'} 
                   size={14} 
-                  color={healthConnected ? '#30D158' : '#00D2FF'} 
+                  color={healthConnected ? '#30D158' : theme.accent} 
                 />
-                <Text style={{ color: healthConnected ? '#30D158' : '#00D2FF', fontSize: 11, fontWeight: '700', marginLeft: 4 }}>
+                <Text style={{ color: healthConnected ? '#30D158' : theme.accent, fontSize: 11, fontWeight: '700', marginLeft: 4 }}>
                   {healthConnected ? 'Connected' : 'Connect'}
                 </Text>
               </TouchableOpacity>
             </View>
             <View style={styles.activityRow}>
               <View style={styles.activityStat}>
-                <MaterialCommunityIcons name="fire" size={24} color="#00D2FF" />
+                <MaterialCommunityIcons name="fire" size={24} color={theme.accent} />
                 <Text style={styles.activityValue}>
                   {healthData.activeCalories > 0 ? healthData.activeCalories : (workoutHistory.filter(w => w.date.startsWith(getLocalDateString())).reduce((sum, w) => sum + w.caloriesBurned, 0) || 0)}
                   <Text style={styles.activityUnit}>kcal</Text>
@@ -984,7 +992,7 @@ export default function HomeScreen({ navigation }: any) {
                 <Text style={styles.activityLabel}>Active Burn</Text>
               </View>
               <View style={styles.activityStat}>
-                <MaterialCommunityIcons name="shoe-sneaker" size={24} color="#00D2FF" />
+                <MaterialCommunityIcons name="shoe-sneaker" size={24} color={theme.accent} />
                 <Text style={styles.activityValue}>{healthData.steps} <Text style={styles.activityUnit}>steps</Text></Text>
                 <Text style={styles.activityLabel}>Daily Steps</Text>
               </View>
@@ -1019,13 +1027,13 @@ export default function HomeScreen({ navigation }: any) {
         }
         
         return (
-          <View key="supplements" style={[styles.card, { width: containerWidth, marginHorizontal: 0, paddingBottom: 15 }]}>
+          <View key="supplements" style={[styles.card, { width: containerWidth, marginHorizontal: 0, paddingBottom: 15, backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]}>
             <View style={styles.cardHeaderRow}>
               <View>
                 <Text style={styles.cardSubtitle}>SUPPLEMENTS</Text>
                 <Text style={styles.trainingPlanTitle}>{activePlan ? activePlan.name : 'No Active Plan'}</Text>
               </View>
-              <MaterialCommunityIcons name="pill" size={24} color="#00D2FF" />
+              <MaterialCommunityIcons name="pill" size={24} color={theme.accent} />
             </View>
             
             {pendingStack ? (
@@ -1034,7 +1042,7 @@ export default function HomeScreen({ navigation }: any) {
                   <MaterialCommunityIcons 
                     name={pendingStackIsComplete ? "check-circle" : "clock-outline"} 
                     size={20} 
-                    color={pendingStackIsComplete ? '#00E676' : '#00D2FF'} 
+                    color={pendingStackIsComplete ? '#00E676' : theme.accent} 
                   />
                   <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 16, marginLeft: 8 }}>
                     {pendingStack.name}
@@ -1057,7 +1065,7 @@ export default function HomeScreen({ navigation }: any) {
                     >
                       <MaterialCommunityIcons name={isTaken ? "checkbox-marked-circle" : "checkbox-blank-circle-outline"} size={22} color={isTaken ? "#00E676" : "#666"} />
                       <Text style={{ color: isTaken ? '#888' : '#DDD', marginLeft: 8, fontSize: 15, textDecorationLine: isTaken ? 'line-through' : 'none' }}>
-                        {libItem?.name || 'Unknown'} <Text style={{ color: '#00D2FF', fontSize: 13 }}>{supp.targetDosage}{libItem?.unit}</Text>
+                        {libItem?.name || 'Unknown'} <Text style={{ color: theme.accent, fontSize: 13 }}>{supp.targetDosage}{libItem?.unit}</Text>
                       </Text>
                     </TouchableOpacity>
                   );
@@ -1075,6 +1083,15 @@ export default function HomeScreen({ navigation }: any) {
           <CheckInWidget containerWidth={containerWidth} key="checkin" />
         );
 
+      case 'arena':
+        return (
+          <IronTacticsWidget
+            containerWidth={containerWidth}
+            key="arena"
+            onPress={() => navigation.navigate('IronTactics')}
+          />
+        );
+
       default:
         return null;
     }
@@ -1083,7 +1100,7 @@ export default function HomeScreen({ navigation }: any) {
   return (
     <View style={{ flex: 1 }}>
     <ScrollView enableOnAndroid={true} extraScrollHeight={20} keyboardShouldPersistTaps="handled" 
-      style={[styles.container, { paddingTop: Math.max(insets.top + 8, 28) }]} 
+      style={[styles.container, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 44) + 12 }]} 
       showsVerticalScrollIndicator={false}
      contentContainerStyle={{ paddingBottom: bottomSpacing }}>
       {/* Header Greeting with Notch Spacing */}
@@ -1094,12 +1111,18 @@ export default function HomeScreen({ navigation }: any) {
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TouchableOpacity 
+            style={[styles.headerIconBadge, { backgroundColor: theme.cardBg, borderColor: theme.accentBorderSoft, marginRight: 8 }]} 
+            onPress={() => setThemePickerVisible(true)}
+          >
+            <MaterialCommunityIcons name="palette-outline" size={20} color={theme.accent} />
+          </TouchableOpacity>
+          <TouchableOpacity 
             style={[styles.headerIconBadge, { backgroundColor: '#FF000020', marginRight: 8 }]} 
             onPress={() => Linking.openURL('https://music.youtube.com').catch(() => {})}
           >
             <MaterialCommunityIcons name="youtube" size={20} color="#FF0000" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.headerIconBadge} onPress={() => setWidgetEditorVisible(true)}>
+          <TouchableOpacity style={[styles.headerIconBadge, { backgroundColor: theme.cardBg, borderColor: theme.subtleBorder }]} onPress={() => setWidgetEditorVisible(true)}>
             <MaterialCommunityIcons name="pencil" size={20} color="#FFD60A" />
           </TouchableOpacity>
         </View>
@@ -1113,31 +1136,31 @@ export default function HomeScreen({ navigation }: any) {
         if (container.widgets.length === 1) {
           // Single row widget
           return (
-            <View key={container.id} style={{ marginBottom: 16 }}>
-              {renderWidget(container.widgets[0], screenWidth - 32)}
+            <View key={container.id} style={{ marginBottom: 14 }}>
+              {renderWidget(container.widgets[0], screenWidth - 28)}
             </View>
           );
         }
 
         // Swipeable Stack of widgets
         return (
-          <View key={container.id} style={{ marginBottom: 16 }}>
+          <View key={container.id} style={{ marginBottom: 14 }}>
             <ScrollView enableOnAndroid={true} extraScrollHeight={20} keyboardShouldPersistTaps="handled"
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
-              snapToInterval={screenWidth - 32}
+              snapToInterval={screenWidth - 28}
               decelerationRate="fast"
             >
               {container.widgets.map((w, i) => (
-                <View key={w} style={{ width: screenWidth - 32, alignItems: 'center' }}>
-                  {renderWidget(w, screenWidth - 32)}
+                <View key={w} style={{ width: screenWidth - 28, alignItems: 'center' }}>
+                  {renderWidget(w, screenWidth - 28)}
                 </View>
               ))}
             </ScrollView>
             
             {/* Pagination Dots */}
-            <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 8, gap: 6 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 6, gap: 6 }}>
               {container.widgets.map((w, i) => (
                 <View key={w} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#555' }} />
               ))}
@@ -1278,36 +1301,44 @@ export default function HomeScreen({ navigation }: any) {
       visible={homeReviewModalVisible}
       onClose={() => setHomeReviewModalVisible(false)}
     />
+
+    {/* Accent Theme Picker Modal */}
+    <AccentThemePickerModal
+      visible={themePickerVisible}
+      onClose={() => setThemePickerVisible(false)}
+    />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingHorizontal: 16, backgroundColor: '#050505' },
+  container: { flex: 1, paddingHorizontal: 16, backgroundColor: '#121212' },
   topHeader: { 
     flexDirection: 'row', 
     justifyContent: 'space-between', 
     alignItems: 'center', 
-    marginBottom: 16 
+    minHeight: 44,
+    marginBottom: 14,
   },
-  greeting: { fontSize: 26, fontWeight: '800', color: '#FFFFFF' },
+  greeting: { fontSize: 26, fontWeight: '800', color: '#FFFFFF', letterSpacing: -0.5 },
   todayDate: { fontSize: 13, color: '#888888', marginTop: 2 },
   headerIconBadge: {
-    backgroundColor: '#111214',
-    padding: 10,
-    borderRadius: 14,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1E2024'
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   // STREAK CARD STYLES
   streakCard: {
-    backgroundColor: '#111214',
-    borderRadius: 24,
+    backgroundColor: '#161C22',
+    borderRadius: 20,
     padding: 20,
-    marginBottom: 16,
+    marginBottom: 0,
     borderWidth: 1,
-    borderColor: '#1E2024',
+    borderColor: 'rgba(0, 210, 255, 0.28)',
   },
   streakLeftCol: {
     flexDirection: 'row',
@@ -1361,12 +1392,12 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    backgroundColor: '#111214',
-    borderRadius: 24,
+    backgroundColor: '#161C22',
+    borderRadius: 20,
     padding: 20,
-    marginBottom: 16,
+    marginBottom: 0,
     borderWidth: 1,
-    borderColor: '#1E2024',
+    borderColor: 'rgba(0, 210, 255, 0.28)',
   },
   cardHeaderRow: {
     flexDirection: 'row',
@@ -1407,7 +1438,7 @@ const styles = StyleSheet.create({
   , marginBottom: 12 },
   editBtnText: { color: '#30D158', fontWeight: '700', fontSize: 13, marginLeft: 4 },
 
-  rangeSelector: { flexDirection: 'row', backgroundColor: '#282828', borderRadius: 8, padding: 3, marginTop: 14, marginBottom: 8 },
+  rangeSelector: { flexDirection: 'row', backgroundColor: '#12171D', borderRadius: 8, padding: 3, marginTop: 14, marginBottom: 8 },
   rangePill: { flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 6 },
   rangePillActive: { backgroundColor: '#3A3A3C' },
   rangePillText: { fontSize: 12, fontWeight: '600', color: '#888888' },
@@ -1440,7 +1471,7 @@ const styles = StyleSheet.create({
   macroLabelRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
   macroTitle: { fontSize: 14, color: '#CCCCCC', fontWeight: '600' },
   macroVal: { fontSize: 13, color: '#888888' },
-  progressTrack: { height: 8, backgroundColor: '#282828', borderRadius: 4, overflow: 'hidden' },
+  progressTrack: { height: 8, backgroundColor: '#222B33', borderRadius: 4, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 4 },
 
   // Modal / Sheet
@@ -1529,7 +1560,7 @@ const styles = StyleSheet.create({
   logPillFull: { backgroundColor: '#30D158', padding: 20, borderRadius: 12, alignItems: 'center' },
   logPillTextFull: { color: '#000', fontSize: 16, fontWeight: '900' },
 
-  activityCard: { backgroundColor: '#111214', borderRadius: 20, padding: 20, marginBottom: 24, borderWidth: 1, borderColor: '#303036' },
+  activityCard: { backgroundColor: '#161C22', borderRadius: 20, padding: 20, marginBottom: 0, borderWidth: 1, borderColor: 'rgba(0, 210, 255, 0.28)' },
   activityHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   activityTitle: { color: '#FFF', fontSize: 16, fontWeight: '700', marginLeft: 8 },
   activityRow: { flexDirection: 'row', justifyContent: 'space-around' },
@@ -1538,14 +1569,14 @@ const styles = StyleSheet.create({
   activityUnit: { fontSize: 14, color: '#888', fontWeight: '600' },
   activityLabel: { color: '#888', fontSize: 12, fontWeight: '600', marginTop: 4 },
 
-  unifiedStreakCard: { backgroundColor: '#111214', borderRadius: 24, padding: 20, marginBottom: 24, borderWidth: 1, borderColor: '#1E2024' },
+  unifiedStreakCard: { backgroundColor: '#161C22', borderRadius: 20, padding: 20, marginBottom: 0, borderWidth: 1, borderColor: 'rgba(0, 210, 255, 0.28)' },
   masterStreakRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   masterStreakNum: { color: '#FFF', fontSize: 24, fontWeight: '900' },
   masterStreakTitle: { color: '#00D2FF', fontSize: 12, fontWeight: '800', letterSpacing: 1 },
   masterBadge: { backgroundColor: '#333', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   masterBadgeActive: { backgroundColor: '#00D2FF' },
   masterBadgeText: { color: '#888', fontSize: 10, fontWeight: '800' },
-  subStreaksRow: { flexDirection: 'row', backgroundColor: '#050505', borderRadius: 12, padding: 12 },
+  subStreaksRow: { flexDirection: 'row', backgroundColor: '#12171D', borderRadius: 12, padding: 12 },
   subStreak: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   subStreakDivider: { width: 1, backgroundColor: '#333', marginHorizontal: 10 },
   subStreakVal: { color: '#FFF', fontSize: 16, fontWeight: '800', marginLeft: 8 },
@@ -1554,7 +1585,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#0E1724',
+    backgroundColor: '#12171D',
     borderWidth: 1.5,
     borderColor: '#00D2FF',
     borderRadius: 12,
@@ -1576,9 +1607,9 @@ const styles = StyleSheet.create({
   quickLogSlotEmpty: {
     width: '48%',
     aspectRatio: 1.5,
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#12171D',
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#222C36',
     borderStyle: 'dashed',
     borderRadius: 12,
     alignItems: 'center',
@@ -1614,13 +1645,13 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   weightTrendCard: {
-    backgroundColor: '#16181D',
+    backgroundColor: '#12171D',
     borderRadius: 14,
     padding: 12,
     marginTop: 8,
     marginBottom: 6,
     borderWidth: 1,
-    borderColor: '#242830',
+    borderColor: '#222C36',
   },
   weightTrendRow: {
     flexDirection: 'row',

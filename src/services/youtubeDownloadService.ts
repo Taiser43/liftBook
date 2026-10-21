@@ -54,10 +54,7 @@ export const getIsDownloadActive = () => isDownloadingActive;
 
 const INVIDIOUS_INSTANCES = [
   'https://invidious.f5.si',
-  'https://invidious.projectsegfau.lt',
-  'https://invidious.protokolla.fi',
-  'https://inv.nadeko.net',
-  'https://invidious.tiekoetter.com'
+  'https://inv.nadeko.net'
 ];
 
 /**
@@ -85,52 +82,59 @@ export const parseYouTubeUrl = (url: string): { type: 'playlist' | 'video' | nul
 };
 
 /**
- * Fetches playlist information & tracklist from Invidious with fallback instances
+ * Fetches playlist information & tracklist concurrently with fast-race across active Invidious instances
  */
 export const fetchPlaylistInfo = async (playlistId: string): Promise<YouTubePlaylistInfo> => {
-  let lastError: any = null;
+  const tasks = INVIDIOUS_INSTANCES.map(async (instance) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
 
-  for (const instance of INVIDIOUS_INSTANCES) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-
       const res = await fetch(`${instance}/api/v1/playlists/${playlistId}`, {
         signal: controller.signal,
         headers: { 'Accept': 'application/json' }
       });
       clearTimeout(timeoutId);
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.videos && Array.isArray(data.videos)) {
-          const tracks: YouTubeTrack[] = data.videos.map((v: any) => ({
-            id: v.videoId,
-            title: v.title || 'Unknown Title',
-            author: v.author || data.author || 'YouTube Artist',
-            durationSeconds: v.lengthSeconds || 0,
-            thumbnailUrl: v.videoThumbnails && v.videoThumbnails.length > 0 
-              ? v.videoThumbnails[v.videoThumbnails.length - 1].url 
-              : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
-            selected: true
-          }));
-
-          return {
-            id: playlistId,
-            title: data.title || 'YouTube Playlist',
-            author: data.author || 'YouTube',
-            thumbnailUrl: tracks.length > 0 ? tracks[0].thumbnailUrl : undefined,
-            tracks
-          };
-        }
+      if (!res.ok) throw new Error(`Status ${res.status}`);
+      const rawText = await res.text();
+      if (!rawText || rawText.startsWith('<!DOCTYPE') || rawText.includes('CAPTCHA')) {
+        throw new Error('Received HTML/CAPTCHA instead of JSON');
       }
-    } catch (e) {
-      lastError = e;
-      console.warn(`Invidious instance ${instance} failed for playlist ${playlistId}:`, e);
-    }
-  }
 
-  throw new Error(lastError ? `Playlist konnte nicht geladen werden: ${lastError.message || lastError}` : 'Keine Antwort von YouTube API erhalten.');
+      const data = JSON.parse(rawText);
+      if (data && data.videos && Array.isArray(data.videos)) {
+        const tracks: YouTubeTrack[] = data.videos.map((v: any) => ({
+          id: v.videoId,
+          title: v.title || 'Unknown Title',
+          author: v.author || data.author || 'YouTube Artist',
+          durationSeconds: v.lengthSeconds || 0,
+          thumbnailUrl: v.videoThumbnails && v.videoThumbnails.length > 0 
+            ? v.videoThumbnails[v.videoThumbnails.length - 1].url 
+            : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
+          selected: true
+        }));
+
+        return {
+          id: playlistId,
+          title: data.title || 'YouTube Playlist',
+          author: data.author || 'YouTube',
+          thumbnailUrl: tracks.length > 0 ? tracks[0].thumbnailUrl : undefined,
+          tracks
+        };
+      }
+      throw new Error('No videos found in response');
+    } catch (e) {
+      clearTimeout(timeoutId);
+      throw e;
+    }
+  });
+
+  try {
+    return await Promise.any(tasks);
+  } catch (err: any) {
+    throw new Error('Playlist konnte online nicht geladen werden. Bitte prüfe deine Internetverbindung.');
+  }
 };
 
 /**
@@ -163,11 +167,98 @@ export const fetchSingleVideoInfo = async (videoId: string): Promise<YouTubeTrac
 };
 
 /**
+ * Safely downloads an image URL into FileSystem.documentDirectory so it is persistent and offline-available.
+ */
+export const downloadCoverImageLocally = async (
+  url?: string,
+  prefix: string = 'cover'
+): Promise<string | undefined> => {
+  if (!url || typeof url !== 'string') return undefined;
+
+  // If already a local file path, verify existence
+  if (url.startsWith('file://') || url.startsWith('/')) {
+    try {
+      const info = await FileSystem.getInfoAsync(url);
+      if (info.exists) return url;
+    } catch (e) {}
+    return undefined;
+  }
+
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    return undefined;
+  }
+
+  try {
+    const cleanPrefix = prefix.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `${cleanPrefix}_${Date.now()}.jpg`;
+    const localPath = `${(FileSystem as any).documentDirectory}${filename}`;
+
+    const downloadRes = await FileSystem.downloadAsync(url, localPath, {
+      sessionType: FileSystem.FileSystemSessionType.BACKGROUND
+    });
+
+    if (downloadRes.status === 200) {
+      const info = await FileSystem.getInfoAsync(localPath);
+      if (info.exists && (info.size === undefined || info.size > 500)) {
+        return localPath;
+      }
+    }
+  } catch (err) {
+    console.warn(`[CoverDownload] Error downloading cover from ${url}:`, err);
+  }
+  return undefined;
+};
+
+/**
+ * Downloads a track's cover locally, trying provided thumbnail and YouTube CDN HD fallbacks.
+ * If the track has no cover, it automatically takes the playlist / album cover.
+ */
+export const downloadTrackCoverWithFallback = async (
+  trackId: string,
+  providedThumbUrl?: string,
+  fallbackCoverUri?: string
+): Promise<string | undefined> => {
+  const candidates: string[] = [];
+
+  if (providedThumbUrl && (providedThumbUrl.startsWith('http://') || providedThumbUrl.startsWith('https://'))) {
+    candidates.push(providedThumbUrl);
+  }
+
+  // Standard YouTube CDN thumbnails for valid 11-character video IDs
+  if (trackId && trackId.length === 11) {
+    candidates.push(`https://i.ytimg.com/vi/${trackId}/maxresdefault.jpg`);
+    candidates.push(`https://i.ytimg.com/vi/${trackId}/hqdefault.jpg`);
+    candidates.push(`https://i.ytimg.com/vi/${trackId}/mqdefault.jpg`);
+  }
+
+  const uniqueCandidates = Array.from(new Set(candidates));
+
+  for (const candUrl of uniqueCandidates) {
+    const local = await downloadCoverImageLocally(candUrl, `cover_yt_${trackId}`);
+    if (local) return local;
+  }
+
+  // If track has no cover or all download attempts failed, adopt playlist / album cover!
+  if (fallbackCoverUri) {
+    if (fallbackCoverUri.startsWith('file://') || fallbackCoverUri.startsWith('/')) {
+      return fallbackCoverUri;
+    }
+    if (fallbackCoverUri.startsWith('http://') || fallbackCoverUri.startsWith('https://')) {
+      const localPl = await downloadCoverImageLocally(fallbackCoverUri, `pl_cover_fallback_${Date.now()}`);
+      if (localPl) return localPl;
+    }
+  }
+
+  return undefined;
+};
+
+/**
  * Converts a YouTube video to MP3 via loader.to / savenow backend and downloads it to FileSystem.documentDirectory
  */
 export const convertAndDownloadTrack = async (
   track: YouTubeTrack,
-  onStatusUpdate?: (status: string) => void
+  onStatusUpdate?: (status: string) => void,
+  fallbackCoverUri?: string
 ): Promise<{ uri: string; coverUri?: string; title: string; artist: string }> => {
   if (cancelRequested) {
     throw new Error('Download wurde abgebrochen.');
@@ -260,20 +351,20 @@ export const convertAndDownloadTrack = async (
     throw new Error(`Download der Audiodatei fehlgeschlagen (${downloadResult ? 'HTTP ' + downloadResult.status : 'abgebrochen'})`);
   }
 
-  // Step 4: Download Thumbnail as local cover image
+  // Step 4: Download Thumbnail as local cover image (or fall back to playlist/album cover)
   let localCoverPath: string | undefined = undefined;
-  if (finalThumbUrl && !cancelRequested) {
+  if (!cancelRequested) {
     try {
-      const coverFilename = `cover_yt_${track.id}_${Date.now()}.jpg`;
-      const coverPath = (FileSystem as any).documentDirectory + coverFilename;
-      const coverResult = await FileSystem.downloadAsync(finalThumbUrl, coverPath, {
-        sessionType: FileSystem.FileSystemSessionType.BACKGROUND
-      });
-      if (coverResult.status === 200) {
-        localCoverPath = coverPath;
-      }
+      localCoverPath = await downloadTrackCoverWithFallback(
+        track.id,
+        finalThumbUrl || track.thumbnailUrl,
+        fallbackCoverUri
+      );
     } catch (e) {
       console.warn("Failed to download thumbnail, continuing without cover:", e);
+      if (fallbackCoverUri && (fallbackCoverUri.startsWith('file://') || fallbackCoverUri.startsWith('/'))) {
+        localCoverPath = fallbackCoverUri;
+      }
     }
   }
 
@@ -327,6 +418,17 @@ export const downloadFullPlaylistInBackground = async (
   const downloadedSongs = [...initialDownloadedSongs];
   let playlistCoverUri = initialCoverUri;
 
+  // If playlist cover is a remote URL, download it locally right away so it is offline-available
+  if (playlistCoverUri && (playlistCoverUri.startsWith('http://') || playlistCoverUri.startsWith('https://'))) {
+    const localPlCover = await downloadCoverImageLocally(
+      playlistCoverUri,
+      `pl_${playlistTitle.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+    );
+    if (localPlCover) {
+      playlistCoverUri = localPlCover;
+    }
+  }
+
   // Persist queue initially
   const persistedQueue: PersistedDownloadQueue = {
     playlistTitle,
@@ -370,18 +472,37 @@ export const downloadFullPlaylistInBackground = async (
     );
 
     try {
-      const songResult = await convertAndDownloadTrack(track, (status) => {
-        const liveProgress = {
-          ...progress,
-          currentSongTitle: `${track.title} (${status})`
-        };
-        if (onProgress) onProgress(liveProgress);
-        useMusicStore.getState().setDownloadProgress(liveProgress);
-      });
+      const songResult = await convertAndDownloadTrack(
+        track,
+        (status) => {
+          const liveProgress = {
+            ...progress,
+            currentSongTitle: `${track.title} (${status})`
+          };
+          if (onProgress) onProgress(liveProgress);
+          useMusicStore.getState().setDownloadProgress(liveProgress);
+        },
+        playlistCoverUri
+      );
 
-      downloadedSongs.push(songResult);
-      if (!playlistCoverUri && songResult.coverUri) {
-        playlistCoverUri = songResult.coverUri;
+      // Either save song's own cover or automatically adopt playlist cover
+      const effectiveCover = songResult.coverUri || playlistCoverUri;
+      const songWithCover = {
+        ...songResult,
+        coverUri: effectiveCover
+      };
+
+      downloadedSongs.push(songWithCover);
+
+      // If playlist had no cover yet, adopt this song's cover as the playlist cover!
+      if (!playlistCoverUri && effectiveCover) {
+        playlistCoverUri = effectiveCover;
+        // Backfill any prior songs in this batch that lacked a cover
+        for (let j = 0; j < downloadedSongs.length; j++) {
+          if (!downloadedSongs[j].coverUri) {
+            downloadedSongs[j].coverUri = playlistCoverUri;
+          }
+        }
       }
 
       // Update persisted queue in AsyncStorage after each successfully downloaded track
@@ -417,12 +538,36 @@ export const downloadFullPlaylistInBackground = async (
     return;
   }
 
+  // Ensure every track in the playlist has a cover (falls back to playlistCoverUri)
+  const finalSongs = downloadedSongs.map(s => ({
+    ...s,
+    coverUri: s.coverUri || playlistCoverUri,
+    cachedUri: s.uri,
+    isStream: false
+  }));
+
   // Register playlist in Zustand useMusicStore
   useMusicStore.getState().addPlaylist(
     playlistTitle || 'YouTube Playlist',
     playlistCoverUri,
-    downloadedSongs
+    finalSongs
   );
+
+  // Also register all songs in downloadedSongs
+  finalSongs.forEach((s: any, idx: number) => {
+    useMusicStore.getState().addDownloadedSong({
+      id: `yt_${s.title.replace(/[^a-zA-Z0-9_-]/g, '_')}_${idx}`,
+      title: s.title,
+      artist: s.artist,
+      uri: s.uri,
+      cachedUri: s.uri,
+      coverUri: s.coverUri || playlistCoverUri,
+      isStream: false,
+      durationMillis: 180000,
+      playCount: 0,
+      playHistory: []
+    });
+  });
 
   // Clear persistent active queue
   await AsyncStorage.removeItem(STORAGE_KEY_ACTIVE_DOWNLOAD);
@@ -468,11 +613,31 @@ export const resumePendingDownloadsIfNeeded = async () => {
     if (queue.currentIndex >= queue.tracks.length) {
       // Completed, register if not yet done
       if (queue.downloadedSongs && queue.downloadedSongs.length > 0) {
+        const finalSongs = queue.downloadedSongs.map(s => ({
+          ...s,
+          coverUri: s.coverUri || queue.playlistCoverUri,
+          cachedUri: s.uri,
+          isStream: false
+        }));
         useMusicStore.getState().addPlaylist(
           queue.playlistTitle || 'YouTube Playlist',
           queue.playlistCoverUri,
-          queue.downloadedSongs
+          finalSongs
         );
+        finalSongs.forEach((s: any, idx: number) => {
+          useMusicStore.getState().addDownloadedSong({
+            id: `yt_${s.title.replace(/[^a-zA-Z0-9_-]/g, '_')}_${idx}`,
+            title: s.title,
+            artist: s.artist,
+            uri: s.uri,
+            cachedUri: s.uri,
+            coverUri: s.coverUri || queue.playlistCoverUri,
+            isStream: false,
+            durationMillis: 180000,
+            playCount: 0,
+            playHistory: []
+          });
+        });
         await showDownloadCompletedNotification(queue.playlistTitle, queue.downloadedSongs.length);
       }
       await AsyncStorage.removeItem(STORAGE_KEY_ACTIVE_DOWNLOAD);

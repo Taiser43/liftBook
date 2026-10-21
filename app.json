@@ -2,6 +2,7 @@
   "expo": {
     "name": "Iron Log",
     "slug": "iron-log",
+    "scheme": "ironlog",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -86,7 +87,36 @@
       ],
       "expo-font",
       "./withHealthConnectQueries.js",
-      "./withDevAppVariant.js"
+      "./withDevAppVariant.js",
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "NutritionDashboardWidget",
+              "label": "Iron Log - Dashboard",
+              "description": "Ernährungsfortschritt, Makros & Mahlzeiten direkt buchen",
+              "minWidth": "280dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            },
+            {
+              "name": "NutritionCompactWidget",
+              "label": "Iron Log - Kompakt",
+              "description": "Kompakte Kalorien- und Makroanzeige mit 1-Tap Log",
+              "minWidth": "130dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 2,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
+      ]
     ],
     "extra": {
       "eas": {

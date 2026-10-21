@@ -16,6 +16,7 @@ import { useAppStore, Ingredient, StorePrice, DietPlan } from '../store/store';
 import SwipeableModal from './SwipeableModal';
 import { showCustomAlert } from '../store/store';
 import { triggerLight, triggerSuccess } from '../utils/haptics';
+import { getAppTheme } from '../utils/theme';
 
 interface ShoppingListModalProps {
   visible: boolean;
@@ -39,6 +40,8 @@ interface AggregatedItem {
 
 export default function ShoppingListModal({ visible, onClose, targetPlanId }: ShoppingListModalProps) {
   const insets = useSafeAreaInsets();
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const {
     dietPlans,
     savedMeals,
@@ -304,13 +307,13 @@ export default function ShoppingListModal({ visible, onClose, targetPlanId }: Sh
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={[styles.container, { paddingTop: Platform.OS === 'android' ? insets.top : 12 }]}>
+      <View style={[styles.container, { backgroundColor: theme.subCardBg || '#121212', paddingTop: Platform.OS === 'android' ? insets.top : 12 }]}>
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { borderBottomColor: theme.subtleBorder || '#222' }]}>
           <View style={{ flex: 1 }}>
             <View style={styles.planBadge}>
-              <MaterialCommunityIcons name="calendar-check" size={14} color="#00D2FF" />
-              <Text style={styles.planBadgeText}>
+              <MaterialCommunityIcons name="calendar-check" size={14} color={theme.accent || "#00D2FF"} />
+              <Text style={[styles.planBadgeText, { color: theme.accent || '#00D2FF' }]}>
                 {activePlan ? activePlan.name.toUpperCase() : 'KEIN AKTIVER PLAN'}
               </Text>
             </View>
@@ -318,7 +321,7 @@ export default function ShoppingListModal({ visible, onClose, targetPlanId }: Sh
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <TouchableOpacity style={styles.headerBtn} onPress={handleShareList}>
-              <MaterialCommunityIcons name="share-variant" size={20} color="#00D2FF" />
+              <MaterialCommunityIcons name="share-variant" size={20} color={theme.accent || "#00D2FF"} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.headerBtn} onPress={onClose}>
               <MaterialCommunityIcons name="close" size={22} color="#FFF" />
@@ -331,7 +334,7 @@ export default function ShoppingListModal({ visible, onClose, targetPlanId }: Sh
           <View style={styles.section}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <Text style={styles.sectionLabel}>ZEITRAUM AUSWÄHLEN</Text>
-              <Text style={styles.selectedDaysText}>
+              <Text style={[styles.selectedDaysText, { color: theme.accent || '#00D2FF' }]}>
                 {selectedDays === 7 ? '7 Tage (1 Woche)' : `${selectedDays} Tage`}
               </Text>
             </View>
@@ -339,7 +342,10 @@ export default function ShoppingListModal({ visible, onClose, targetPlanId }: Sh
               {PRESET_DAYS.map(d => (
                 <TouchableOpacity
                   key={d}
-                  style={[styles.dayChip, selectedDays === d && styles.dayChipActive]}
+                  style={[
+                    styles.dayChip, 
+                    selectedDays === d && { backgroundColor: theme.accent || '#00D2FF', borderColor: theme.accent || '#00D2FF' }
+                  ]}
                   onPress={() => {
                     setSelectedDays(d);
                     triggerLight();

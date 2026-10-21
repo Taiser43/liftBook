@@ -2,10 +2,13 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Animated } from 'react-native';
 import { useAppStore } from '../store/store';
 import { BlurView } from 'expo-blur';
+import { getAppTheme } from '../utils/theme';
 
 export default function CustomAlert() {
   const alertOptions = useAppStore(state => state.customAlertOptions);
   const setCustomAlert = useAppStore(state => state.setCustomAlert);
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
 
   if (!alertOptions) return null;
 
@@ -27,8 +30,8 @@ export default function CustomAlert() {
     >
       <View style={styles.overlay}>
         <BlurView intensity={30} style={StyleSheet.absoluteFill} tint="dark" />
-        <View style={styles.alertBox}>
-          <Text style={styles.title}>{alertOptions.title}</Text>
+        <View style={[styles.alertBox, { backgroundColor: theme.cardBg || '#1E1E1E', borderColor: theme.cardBorder || '#333', shadowColor: theme.accent || '#000' }]}>
+          <Text style={[styles.title, { color: theme.accent || '#00D2FF' }]}>{alertOptions.title}</Text>
           {alertOptions.message ? (
             <Text style={styles.message}>{alertOptions.message}</Text>
           ) : null}
@@ -41,6 +44,7 @@ export default function CustomAlert() {
                   key={index}
                   style={[
                     styles.button,
+                    !isDestructive && !isCancel && { backgroundColor: theme.accent || '#00D2FF' },
                     buttons.length > 2 && styles.buttonStacked,
                     isDestructive && styles.buttonDestructive,
                     isCancel && styles.buttonCancel,

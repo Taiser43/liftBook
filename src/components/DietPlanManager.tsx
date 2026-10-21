@@ -3,6 +3,7 @@ import { KeyboardAwareScrollView as ScrollView } from 'react-native-keyboard-awa
 import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput, Alert, Switch } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppStore, DietPlan, ScheduledMeal, Recipe } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 import SwipeableModal from './SwipeableModal';
 import MacroDonut from './MacroDonut';
 import ShoppingListModal from './ShoppingListModal';
@@ -17,7 +18,8 @@ const DAYS_OF_WEEK = ["Everyday", "Monday", "Tuesday", "Wednesday", "Thursday", 
 const FILTER_DAYS = ["All", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 export default function DietPlanManager({ visible, onClose, initialPlanId }: DietPlanManagerProps) {
-  const { dietPlans, addDietPlan, updateDietPlan, deleteDietPlan, toggleDietPlanActive, savedMeals } = useAppStore();
+  const { dietPlans, addDietPlan, updateDietPlan, deleteDietPlan, toggleDietPlanActive, savedMeals, accentThemeId } = useAppStore();
+  const theme = getAppTheme(accentThemeId);
   
   const [editingPlan, setEditingPlan] = useState<DietPlan | null>(null);
   const [isAddingMeal, setIsAddingMeal] = useState(false);
@@ -179,7 +181,7 @@ export default function DietPlanManager({ visible, onClose, initialPlanId }: Die
         <View style={styles.container}>
           <View style={styles.header}>
             <TouchableOpacity onPress={() => { setEditingPlan(null); if(initialPlanId) onClose(); }}>
-              <MaterialCommunityIcons name="arrow-left" size={28} color="#00D2FF" />
+              <MaterialCommunityIcons name="arrow-left" size={28} color={theme.accent || "#00D2FF"} />
             </TouchableOpacity>
             <TextInput
               style={styles.titleInput}
@@ -293,7 +295,7 @@ export default function DietPlanManager({ visible, onClose, initialPlanId }: Die
                   setSelectedDays(['Everyday']);
                 }
               }}>
-                <MaterialCommunityIcons name="plus-circle" size={24} color="#00D2FF" />
+                <MaterialCommunityIcons name="plus-circle" size={24} color={theme.accent || "#00D2FF"} />
               </TouchableOpacity>
             </View>
 
@@ -330,7 +332,7 @@ export default function DietPlanManager({ visible, onClose, initialPlanId }: Die
                           setSelectedRecipe(savedMeals.find(r => r.id === meal.recipeId) || null);
                           setIsAddingMeal(true);
                         }}>
-                          <MaterialCommunityIcons name="pencil" size={20} color="#00D2FF" />
+                          <MaterialCommunityIcons name="pencil" size={20} color={theme.accent || "#00D2FF"} />
                         </TouchableOpacity>
                         <TouchableOpacity onPress={() => handleDeleteMeal(meal.id)}>
                           <MaterialCommunityIcons name="trash-can-outline" size={20} color="#FF453A" />
@@ -453,14 +455,14 @@ export default function DietPlanManager({ visible, onClose, initialPlanId }: Die
                 savedMeals.filter(r => r.name.toLowerCase().includes(recipeSearchQuery.toLowerCase())).map(recipe => (
                   <TouchableOpacity
                     key={recipe.id}
-                    style={[styles.recipeRow, selectedRecipe?.id === recipe.id && styles.recipeRowActive]}
+                    style={[styles.recipeRow, selectedRecipe?.id === recipe.id && { borderColor: theme.accent || '#00D2FF', backgroundColor: theme.accentSoftBg || '#00D2FF10' }]}
                     onPress={() => setSelectedRecipe(recipe)}
                   >
                     <View>
-                      <Text style={[styles.recipeName, selectedRecipe?.id === recipe.id && { color: '#00D2FF' }]}>{recipe.name}</Text>
+                      <Text style={[styles.recipeName, selectedRecipe?.id === recipe.id && { color: theme.accent || '#00D2FF' }]}>{recipe.name}</Text>
                       <Text style={styles.recipeMacros}>{recipe.calories} kcal • {recipe.protein}g Pro</Text>
                     </View>
-                    {selectedRecipe?.id === recipe.id && <MaterialCommunityIcons name="check-circle" size={20} color="#00D2FF" />}
+                    {selectedRecipe?.id === recipe.id && <MaterialCommunityIcons name="check-circle" size={20} color={theme.accent || "#00D2FF"} />}
                   </TouchableOpacity>
                 ))
               )}
@@ -518,8 +520,8 @@ export default function DietPlanManager({ visible, onClose, initialPlanId }: Die
                     <Text style={[styles.planBtnText, { color: '#30D158' }]}>Einkaufsliste</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.planBtn} onPress={() => setEditingPlan(plan)}>
-                    <MaterialCommunityIcons name="pencil" size={16} color="#00D2FF" />
-                    <Text style={styles.planBtnText}>Edit</Text>
+                    <MaterialCommunityIcons name="pencil" size={16} color={theme.accent || "#00D2FF"} />
+                    <Text style={[styles.planBtnText, { color: theme.accent || '#00D2FF' }]}>Edit</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.planBtn} onPress={() => deleteDietPlan(plan.id)}>
                     <MaterialCommunityIcons name="trash-can-outline" size={16} color="#FF453A" />
@@ -540,8 +542,8 @@ export default function DietPlanManager({ visible, onClose, initialPlanId }: Die
             <TouchableOpacity style={[styles.createBtn, { backgroundColor: '#30D15820' }]} onPress={() => handleCreatePlan('Maintain')}>
               <Text style={[styles.createBtnText, { color: '#30D158' }]}>MAINTAIN</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.createBtn, { backgroundColor: '#00D2FF20' }]} onPress={() => handleCreatePlan('Bulk')}>
-              <Text style={[styles.createBtnText, { color: '#00D2FF' }]}>BULK</Text>
+            <TouchableOpacity style={[styles.createBtn, { backgroundColor: theme.accentSoftBg || '#00D2FF20' }]} onPress={() => handleCreatePlan('Bulk')}>
+              <Text style={[styles.createBtnText, { color: theme.accent || '#00D2FF' }]}>BULK</Text>
             </TouchableOpacity>
           </View>
         </View>

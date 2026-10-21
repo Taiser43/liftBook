@@ -3,6 +3,7 @@ import { KeyboardAwareScrollView as ScrollView } from 'react-native-keyboard-awa
 import { View, Text, StyleSheet, Modal, TouchableOpacity, TextInput, Alert } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 import { useCardioStore } from '../store/useCardioStore';
 import { useAutoChessStore } from '../store/useAutoChessStore';
 
@@ -12,9 +13,11 @@ interface Props {
 }
 
 export const AdminPanelModal: React.FC<Props> = ({ visible, onClose }) => {
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const { 
     adminStreakOverride, setAdminStreakOverride,
-    totalXP, juggernautXP, aestheticXP, rangerXP, monkXP
+    totalXP
   } = useAppStore();
   
   const cardioXP = useCardioStore(state => state.cardioXP) || {};
@@ -22,10 +25,6 @@ export const AdminPanelModal: React.FC<Props> = ({ visible, onClose }) => {
 
   const [streakVal, setStreakVal] = useState(adminStreakOverride ? adminStreakOverride.toString() : '');
   const [totXp, setTotXp] = useState(totalXP.toString());
-  const [juggXp, setJuggXp] = useState(juggernautXP.toString());
-  const [aesXp, setAesXp] = useState(aestheticXP.toString());
-  const [rangXp, setRangXp] = useState(rangerXP.toString());
-  const [monkXp, setMonkXp] = useState(monkXP.toString());
   
   const [runXp, setRunXp] = useState((cardioXP['Running'] || 0).toString());
   const [cycXp, setCycXp] = useState((cardioXP['Cycling'] || 0).toString());
@@ -35,15 +34,11 @@ export const AdminPanelModal: React.FC<Props> = ({ visible, onClose }) => {
     if (visible) {
       setStreakVal(adminStreakOverride ? adminStreakOverride.toString() : '');
       setTotXp(totalXP.toString());
-      setJuggXp(juggernautXP.toString());
-      setAesXp(aestheticXP.toString());
-      setRangXp(rangerXP.toString());
-      setMonkXp(monkXP.toString());
       setRunXp((cardioXP['Running'] || 0).toString());
       setCycXp((cardioXP['Cycling'] || 0).toString());
       setTrophiesVal((autochessTrophies || 0).toString());
     }
-  }, [visible, adminStreakOverride, totalXP, juggernautXP, aestheticXP, rangerXP, monkXP, cardioXP, autochessTrophies]);
+  }, [visible, adminStreakOverride, totalXP, cardioXP, autochessTrophies]);
 
   const handleSave = () => {
     const s = streakVal.trim() === '' ? null : parseInt(streakVal, 10);
@@ -51,10 +46,6 @@ export const AdminPanelModal: React.FC<Props> = ({ visible, onClose }) => {
     
     useAppStore.setState({
       totalXP: parseInt(totXp) || 0,
-      juggernautXP: parseInt(juggXp) || 0,
-      aestheticXP: parseInt(aesXp) || 0,
-      rangerXP: parseInt(rangXp) || 0,
-      monkXP: parseInt(monkXp) || 0,
     });
     
     useCardioStore.setState({
@@ -69,9 +60,6 @@ export const AdminPanelModal: React.FC<Props> = ({ visible, onClose }) => {
       trophies: Math.max(0, parseInt(trophiesVal, 10) || 0),
     });
 
-    // We also need to update totalXP so master level syncs, but totalXP is calculated from workouts!
-    // Wait, totalXP in store is `totalXP`. We should let the user override it too!
-    
     Alert.alert('Success', 'Admin overrides applied!');
     onClose();
   };
@@ -87,7 +75,7 @@ export const AdminPanelModal: React.FC<Props> = ({ visible, onClose }) => {
         </View>
 
         <ScrollView enableOnAndroid={true} extraScrollHeight={20} keyboardShouldPersistTaps="handled" style={styles.content}>
-          <Text style={styles.sectionTitle}>Iron Tactics Trophäen</Text>
+          <Text style={[styles.sectionTitle, { color: theme.accent }]}>Iron Tactics Trophäen</Text>
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Trophäen (0: Gym, 100: Bronze, 500: Silber, 1000: Gold, 2500: Challenger, 3750: God)</Text>
             <TextInput 
@@ -100,7 +88,7 @@ export const AdminPanelModal: React.FC<Props> = ({ visible, onClose }) => {
             />
           </View>
 
-          <Text style={styles.sectionTitle}>Streak Override</Text>
+          <Text style={[styles.sectionTitle, { color: theme.accent }]}>Streak Override</Text>
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Master Streak (Leave empty for auto)</Text>
             <TextInput 
@@ -113,37 +101,13 @@ export const AdminPanelModal: React.FC<Props> = ({ visible, onClose }) => {
             />
           </View>
 
-          <Text style={styles.sectionTitle}>Master Profile</Text>
+          <Text style={[styles.sectionTitle, { color: theme.accent }]}>Master Profile</Text>
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Total XP (Changes Master Level)</Text>
             <TextInput style={styles.input} keyboardType="number-pad" value={totXp} onChangeText={setTotXp} />
           </View>
 
-          <Text style={styles.sectionTitle}>Hero Class XP</Text>
-          
-          <View style={styles.inputRow}>
-            <View style={styles.inputHalf}>
-              <Text style={styles.label}>Juggernaut</Text>
-              <TextInput style={styles.input} keyboardType="number-pad" value={juggXp} onChangeText={setJuggXp} />
-            </View>
-            <View style={styles.inputHalf}>
-              <Text style={styles.label}>Aesthetic</Text>
-              <TextInput style={styles.input} keyboardType="number-pad" value={aesXp} onChangeText={setAesXp} />
-            </View>
-          </View>
-          
-          <View style={styles.inputRow}>
-            <View style={styles.inputHalf}>
-              <Text style={styles.label}>Ranger</Text>
-              <TextInput style={styles.input} keyboardType="number-pad" value={rangXp} onChangeText={setRangXp} />
-            </View>
-            <View style={styles.inputHalf}>
-              <Text style={styles.label}>Monk</Text>
-              <TextInput style={styles.input} keyboardType="number-pad" value={monkXp} onChangeText={setMonkXp} />
-            </View>
-          </View>
-
-          <Text style={styles.sectionTitle}>Cardio XP</Text>
+          <Text style={[styles.sectionTitle, { color: theme.accent }]}>Cardio XP</Text>
           <View style={styles.inputRow}>
             <View style={styles.inputHalf}>
               <Text style={styles.label}>Running</Text>
@@ -155,7 +119,7 @@ export const AdminPanelModal: React.FC<Props> = ({ visible, onClose }) => {
             </View>
           </View>
 
-          <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+          <TouchableOpacity style={[styles.saveBtn, { backgroundColor: theme.accent }]} onPress={handleSave}>
             <Text style={styles.saveBtnText}>Apply Overrides</Text>
           </TouchableOpacity>
         </ScrollView>

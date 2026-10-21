@@ -2,29 +2,24 @@ import React from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { getLevelTierInfo } from '../utils/levels';
+import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 
 export interface LevelProgressionModalProps {
   visible: boolean;
   onClose: () => void;
   title: string;
   currentXP: number; // For achievements, this is progress
-  type: 'class' | 'cardio' | 'achievement';
+  type: 'cardio' | 'achievement';
   thresholds?: number[];
   description?: string;
   children?: React.ReactNode;
 }
 
 export const LevelProgressionModal: React.FC<LevelProgressionModalProps> = ({ visible, onClose, title, currentXP, type, thresholds, description, children }) => {
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const base = type === 'cardio' ? 500 : 1000;
-  
-  
-  const getHeroDescription = (name: string) => {
-    if (name === 'Juggernaut') return 'Earn XP through heavy lifting (Bench Press, Squat, Deadlift) and pure strength training.';
-    if (name === 'Aesthetic') return 'Earn XP through high volume, hypertrophy training, and isolation exercises.';
-    if (name === 'Ranger') return 'Earn XP through bodyweight exercises, callisthenics, and agility training.';
-    if (name === 'Monk') return 'Earn XP through consistent daily activity, stretching, and martial arts.';
-    return 'Earn XP by completing workouts focusing on this archetype.';
-  };
   
   const tiers = [
     { name: 'Bronze', startLevel: 1,  icon: 'shield-outline',    color: '#CD7F32' },
@@ -52,8 +47,8 @@ export const LevelProgressionModal: React.FC<LevelProgressionModalProps> = ({ vi
   return (
     <Modal visible={visible} animationType="slide" transparent={true}>
       <View style={styles.overlay}>
-        <View style={styles.content}>
-          <View style={styles.header}>
+        <View style={[styles.content, { backgroundColor: theme.subCardBg || '#121212' }]}>
+          <View style={[styles.header, { borderBottomColor: theme.subtleBorder || '#222' }]}>
             <View>
               <Text style={styles.title}>{title}</Text>
               <Text style={[styles.subtitle, { color: currentTierInfo.color }]}>
@@ -70,7 +65,6 @@ export const LevelProgressionModal: React.FC<LevelProgressionModalProps> = ({ vi
             <View style={styles.infoBox}>
               <Text style={styles.infoText}>
                 {type === 'cardio' && 'Earn XP through distance, duration, and high heart rate zones (Intensity).'}
-                {type === 'class' && getHeroDescription(title)}
                 {type === 'achievement' && (description || 'Complete the required goals to upgrade this badge tier.')}
               </Text>
             </View>
@@ -119,7 +113,7 @@ export const LevelProgressionModal: React.FC<LevelProgressionModalProps> = ({ vi
                     </View>
                   </View>
                   {isUnlocked && <MaterialCommunityIcons name="check-circle" size={24} color={t.color} />}
-                  {isNext && <Text style={{ color: '#00D2FF', fontSize: 12, fontWeight: '700' }}>{Math.floor(progressToTier * 100)}%</Text>}
+                  {isNext && <Text style={{ color: theme.accent || '#00D2FF', fontSize: 12, fontWeight: '700' }}>{Math.floor(progressToTier * 100)}%</Text>}
                 </View>
               );
             })}

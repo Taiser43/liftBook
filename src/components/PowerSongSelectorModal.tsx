@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMusicStore, Song } from '../store/useMusicStore';
+import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 import PowerSongConfigModal from './PowerSongConfigModal';
 
 interface Props {
@@ -10,6 +12,8 @@ interface Props {
 }
 
 export default function PowerSongSelectorModal({ visible, onClose }: Props) {
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const { playlists } = useMusicStore();
   const [selectedSong, setSelectedSong] = useState<{song: Song, playlistId: string} | null>(null);
 
@@ -35,14 +39,14 @@ export default function PowerSongSelectorModal({ visible, onClose }: Props) {
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Hype Song auswählen</Text>
           <TouchableOpacity onPress={onClose}>
-            <MaterialCommunityIcons name="close" size={28} color="#00D2FF" />
+            <MaterialCommunityIcons name="close" size={28} color={theme.accent} />
           </TouchableOpacity>
         </View>
 
         <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 40 }}>
           {playlists.map(playlist => (
             <View key={playlist.id} style={{ marginBottom: 20 }}>
-              <Text style={styles.playlistTitle}>{playlist.name}</Text>
+              <Text style={[styles.playlistTitle, { color: theme.accent }]}>{playlist.name}</Text>
               {playlist.songs.map(song => (
                 <TouchableOpacity 
                   key={song.id} 

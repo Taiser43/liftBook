@@ -9,13 +9,15 @@ interface Props {
   isShop?: boolean;
   isBoard?: boolean;
   size?: 'compact' | 'medium' | 'large';
+  customWidth?: number;
+  customHeight?: number;
   onPress?: () => void;
   onLongPress?: () => void;
   overrideHp?: number;
   isAttacking?: boolean;
   isHit?: boolean;
   isDead?: boolean;
-  floatingDmg?: { text: string; isCrit?: boolean } | null;
+  floatingDmg?: { text: string; isCrit?: boolean; isHeal?: boolean } | null;
   upgradeAvailable?: 'lvl2' | 'lvl3' | 'owned' | null;
   synergyHint?: string | null;
 }
@@ -34,6 +36,8 @@ export const AutoChessCard: React.FC<Props> = React.memo(({
   isShop = false,
   isBoard = false,
   size = 'medium',
+  customWidth,
+  customHeight,
   onPress,
   onLongPress,
   overrideHp,
@@ -127,9 +131,10 @@ export const AutoChessCard: React.FC<Props> = React.memo(({
   const isCompact = size === 'compact';
   const isLarge = size === 'large';
 
-  const cardWidth = isCompact ? 104 : isLarge ? 260 : 140;
-  const cardHeight = isCompact ? 148 : isLarge ? 340 : 195;
-  const artHeight = isCompact ? 52 : isLarge ? 130 : 75;
+  const cardWidth = customWidth || (isCompact ? 104 : isLarge ? 260 : 140);
+  const cardHeight = customHeight || (isCompact ? (customWidth ? Math.round(customWidth * 1.34) : 148) : isLarge ? 340 : 195);
+  const isMini = isCompact && cardWidth < 88;
+  const artHeight = isCompact ? (isMini ? Math.max(30, Math.round(cardHeight * 0.30)) : 52) : isLarge ? 130 : 75;
 
   return (
     <TouchableOpacity
@@ -146,6 +151,10 @@ export const AutoChessCard: React.FC<Props> = React.memo(({
           shadowColor: shadowColor,
           shadowRadius: shadowRadius,
           shadowOpacity: shadowOpacity,
+          padding: isMini ? 3 : isCompact ? 6 : 8,
+          marginHorizontal: isMini ? 1 : 2,
+          marginVertical: isMini ? 1.5 : 3,
+          borderRadius: isMini ? 8 : 14,
         },
       ]}
     >
@@ -191,63 +200,63 @@ export const AutoChessCard: React.FC<Props> = React.memo(({
       )}
 
       {/* Top Header */}
-      <View style={styles.topHeader}>
+      <View style={[styles.topHeader, isMini && styles.topHeaderMini]}>
         {isBossUnit ? (
-          <View style={[styles.catBadge, { backgroundColor: '#A855F730', borderColor: '#C084FC' }]}>
-            <Text style={[styles.catBadgeText, { color: '#C084FC' }]}>👑 BOSS</Text>
+          <View style={[styles.catBadge, isMini && styles.catBadgeMini, { backgroundColor: '#A855F730', borderColor: '#C084FC' }]}>
+            <Text style={[styles.catBadgeText, isMini && styles.catBadgeTextMini, { color: '#C084FC' }]}>👑 BOSS</Text>
           </View>
         ) : is3Star && hasTitanPrismatic ? (
-          <View style={[styles.catBadge, { backgroundColor: '#00F2FE25', borderColor: '#00F2FE90' }]}>
-            <Text style={[styles.catBadgeText, { color: '#00F2FE' }]}>✨ TITAN FOIL</Text>
+          <View style={[styles.catBadge, isMini && styles.catBadgeMini, { backgroundColor: '#00F2FE25', borderColor: '#00F2FE90' }]}>
+            <Text style={[styles.catBadgeText, isMini && styles.catBadgeTextMini, { color: '#00F2FE' }]}>✨ TITAN</Text>
           </View>
         ) : (
-          <View style={[styles.catBadge, { backgroundColor: `${theme.color}25`, borderColor: `${theme.color}60` }]}>
-            <Text style={[styles.catBadgeText, { color: theme.color }]}>
-              {theme.dot} {theme.title}
+          <View style={[styles.catBadge, isMini && styles.catBadgeMini, { backgroundColor: `${theme.color}25`, borderColor: `${theme.color}60` }]}>
+            <Text style={[styles.catBadgeText, isMini && styles.catBadgeTextMini, { color: theme.color }]}>
+              {isMini ? theme.dot : `${theme.dot} ${theme.title}`}
             </Text>
           </View>
         )}
 
         {isShop ? (
           <WeightPlateIcon
-            size={isCompact ? 19 : isLarge ? 28 : 22}
+            size={isMini ? 15 : isCompact ? 19 : isLarge ? 28 : 22}
             color={getOlympicPlateColor(data.cost)}
             label={data.cost}
           />
         ) : (
           <View style={styles.rightHeaderGroup}>
             <WeightPlateIcon
-              size={isCompact ? 19 : isLarge ? 28 : 22}
+              size={isMini ? 15 : isCompact ? 19 : isLarge ? 28 : 22}
               color={getOlympicPlateColor(data.cost)}
               label={data.cost}
             />
             <View style={styles.starsRow}>
-              {stars >= 1 && <Text style={[styles.starIcon, is2Star || is3Star ? styles.starGold : null]}>★</Text>}
-              {stars >= 2 && <Text style={[styles.starIcon, styles.starGold]}>★</Text>}
-              {stars >= 3 && <Text style={[styles.starIcon, styles.starTitan]}>★</Text>}
+              {stars >= 1 && <Text style={[styles.starIcon, isMini && styles.starIconMini, is2Star || is3Star ? styles.starGold : null]}>★</Text>}
+              {stars >= 2 && <Text style={[styles.starIcon, isMini && styles.starIconMini, styles.starGold]}>★</Text>}
+              {stars >= 3 && <Text style={[styles.starIcon, isMini && styles.starIconMini, styles.starTitan]}>★</Text>}
             </View>
           </View>
         )}
       </View>
 
       {/* Exercise Title */}
-      <Text style={[styles.exerciseName, isCompact && { fontSize: 11 }]} numberOfLines={isCompact ? 1 : 2}>
+      <Text style={[styles.exerciseName, isMini ? styles.exerciseNameMini : isCompact && { fontSize: 11 }]} numberOfLines={isCompact ? 1 : 2}>
         {data.exerciseName}
       </Text>
 
       {/* Middle Artwork Window (Image or Procedural Vector Art) */}
-      <View style={[styles.artWindow, { height: artHeight, backgroundColor: '#141418' }]}>
+      <View style={[styles.artWindow, isMini && styles.artWindowMini, { height: artHeight, backgroundColor: '#141418' }]}>
         {data.imageUri ? (
           <Image source={{ uri: data.imageUri }} style={styles.artImage} resizeMode="cover" />
         ) : (
           <View style={styles.proceduralContainer}>
             {/* Ambient Background Glow */}
-            <View style={[styles.ambientGlow, { backgroundColor: `${theme.color}20` }]} />
+            <View style={[styles.ambientGlow, isMini && { width: 36, height: 36 }, { backgroundColor: `${theme.color}20` }]} />
             
             {/* Center Vector Icon */}
             <MaterialCommunityIcons 
               name={theme.icon} 
-              size={isCompact ? 28 : isLarge ? 54 : 36} 
+              size={isMini ? 18 : isCompact ? 28 : isLarge ? 54 : 36} 
               color={theme.color} 
             />
 
@@ -265,7 +274,7 @@ export const AutoChessCard: React.FC<Props> = React.memo(({
 
       {/* Health Bar (In Combat or On Board) */}
       {isBoard && maxHp > 0 && (
-        <View style={styles.hpBarTrack}>
+        <View style={[styles.hpBarTrack, isMini && styles.hpBarTrackMini]}>
           <View style={[styles.hpBarFill, { width: `${Math.min(100, Math.max(0, (currentHp / maxHp) * 100))}%` }]} />
         </View>
       )}
@@ -281,20 +290,20 @@ export const AutoChessCard: React.FC<Props> = React.memo(({
       )}
 
       {/* Stats Row */}
-      <View style={styles.statsRow}>
-        <View style={styles.statPill}>
-          <Text style={styles.statLabel}>ATK</Text>
-          <Text style={[styles.statValue, { color: '#F43F5E' }]}>{currentAtk}</Text>
+      <View style={[styles.statsRow, isMini && styles.statsRowMini]}>
+        <View style={[styles.statPill, isMini && styles.statPillMini]}>
+          <Text style={[styles.statLabel, isMini && styles.statLabelMini]}>ATK</Text>
+          <Text style={[styles.statValue, isMini && styles.statValueMini, { color: '#F43F5E' }]}>{currentAtk}</Text>
         </View>
-        <View style={styles.statPill}>
-          <Text style={styles.statLabel}>HP</Text>
-          <Text style={[styles.statValue, { color: '#10B981' }]}>{currentHp}</Text>
+        <View style={[styles.statPill, isMini && styles.statPillMini]}>
+          <Text style={[styles.statLabel, isMini && styles.statLabelMini]}>HP</Text>
+          <Text style={[styles.statValue, isMini && styles.statValueMini, { color: '#10B981' }]}>{currentHp}</Text>
         </View>
       </View>
 
       {/* Equipped Items Badges (up to 2 items) */}
       {isUnit && (data as AutoChessUnit).items && (data as AutoChessUnit).items!.length > 0 && (
-        <View style={styles.cardItemsRow}>
+        <View style={[styles.cardItemsRow, isMini && styles.cardItemsRowMini]}>
           {(data as AutoChessUnit).items!.map((it, idx) => {
             const itemColor = it.rarity === 'epic' ? '#BF5AF2' : it.rarity === 'rare' ? '#0A84FF' : '#E0E0E6';
             return (
@@ -302,10 +311,11 @@ export const AutoChessCard: React.FC<Props> = React.memo(({
                 key={`${it.id}_${idx}`} 
                 style={[
                   styles.cardItemBadge, 
+                  isMini && styles.cardItemBadgeMini,
                   { borderColor: itemColor, backgroundColor: `${itemColor}20` }
                 ]}
               >
-                <MaterialCommunityIcons name={it.icon as any} size={isCompact ? 9 : 11} color={itemColor} />
+                <MaterialCommunityIcons name={it.icon as any} size={isMini ? 7.5 : isCompact ? 9 : 11} color={itemColor} />
                 {!isCompact && (
                   <Text style={[styles.cardItemBadgeText, { color: itemColor }]} numberOfLines={1}>
                     {it.name.split(' ')[0]}
@@ -326,11 +336,24 @@ export const AutoChessCard: React.FC<Props> = React.memo(({
         </View>
       )}
 
-      {/* Floating Damage Popup Badge */}
+      {/* Floating Damage / Heal Popup Badge */}
       {floatingDmg && (
-        <View style={[styles.floatingDmgContainer, floatingDmg.isCrit && styles.critDmgContainer]}>
-          <Text style={[styles.floatingDmgText, floatingDmg.isCrit && styles.critDmgText]}>
-            {floatingDmg.isCrit ? '🔥 CRIT ' : '💥 '}{floatingDmg.text}
+        <View
+          style={[
+            styles.floatingDmgContainer,
+            floatingDmg.isCrit && styles.critDmgContainer,
+            floatingDmg.isHeal && styles.healDmgContainer,
+          ]}
+        >
+          <Text
+            style={[
+              styles.floatingDmgText,
+              floatingDmg.isCrit && styles.critDmgText,
+              floatingDmg.isHeal && styles.healDmgText,
+            ]}
+          >
+            {floatingDmg.isHeal ? '' : floatingDmg.isCrit ? '🔥 CRIT ' : '💥 '}
+            {floatingDmg.text}
           </Text>
         </View>
       )}
@@ -365,16 +388,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
+  topHeaderMini: {
+    marginBottom: 2,
+  },
   catBadge: {
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
     borderWidth: 0.8,
   },
+  catBadgeMini: {
+    paddingHorizontal: 3,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
   catBadgeText: {
     fontSize: 9,
     fontWeight: '800',
     textTransform: 'uppercase',
+  },
+  catBadgeTextMini: {
+    fontSize: 7.5,
   },
   plateNumberBadge: {
     width: 22,
@@ -456,6 +490,10 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     marginHorizontal: 0.5,
   },
+  starIconMini: {
+    fontSize: 8,
+    marginHorizontal: 0.2,
+  },
   starGold: {
     color: '#FFD700',
     textShadowColor: 'rgba(255, 215, 0, 0.6)',
@@ -475,6 +513,11 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     letterSpacing: -0.2,
   },
+  exerciseNameMini: {
+    fontSize: 8.5,
+    marginBottom: 2,
+    lineHeight: 11,
+  },
   artWindow: {
     width: '100%',
     borderRadius: 10,
@@ -483,6 +526,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#24242A',
     marginBottom: 6,
+  },
+  artWindowMini: {
+    borderRadius: 6,
+    marginBottom: 2,
   },
   artImage: {
     width: '100%',
@@ -522,6 +569,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 6,
   },
+  hpBarTrackMini: {
+    height: 3,
+    marginBottom: 2,
+    borderRadius: 1.5,
+  },
   hpBarFill: {
     height: '100%',
     backgroundColor: '#30D158',
@@ -530,6 +582,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 4,
+  },
+  statsRowMini: {
+    gap: 2,
   },
   statPill: {
     flex: 1,
@@ -540,15 +595,25 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     borderColor: '#2A2A35',
   },
+  statPillMini: {
+    borderRadius: 4,
+    paddingVertical: 1.5,
+  },
   statLabel: {
     color: '#8E8E93',
     fontSize: 7.5,
     fontWeight: '700',
     textTransform: 'uppercase',
   },
+  statLabelMini: {
+    fontSize: 6.5,
+  },
   statValue: {
     fontSize: 11,
     fontWeight: '900',
+  },
+  statValueMini: {
+    fontSize: 9,
   },
   traitFooter: {
     marginTop: 4,
@@ -587,6 +652,12 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     shadowColor: '#FFD700',
   },
+  healDmgContainer: {
+    backgroundColor: '#10B981F0',
+    borderColor: '#34D399',
+    borderWidth: 1.5,
+    shadowColor: '#10B981',
+  },
   floatingDmgText: {
     color: '#FFFFFF',
     fontSize: 12,
@@ -595,6 +666,10 @@ const styles = StyleSheet.create({
   },
   critDmgText: {
     color: '#000000',
+    fontWeight: '900',
+  },
+  healDmgText: {
+    color: '#FFFFFF',
     fontWeight: '900',
   },
   deadOverlay: {
@@ -692,6 +767,11 @@ const styles = StyleSheet.create({
     marginTop: 2,
     marginBottom: 2,
   },
+  cardItemsRowMini: {
+    gap: 1.5,
+    marginTop: 1,
+    marginBottom: 1,
+  },
   cardItemBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -700,6 +780,12 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     borderWidth: 0.8,
     gap: 2,
+  },
+  cardItemBadgeMini: {
+    paddingHorizontal: 2.5,
+    paddingVertical: 0.5,
+    borderRadius: 3,
+    gap: 1,
   },
   cardItemBadgeText: {
     fontSize: 7.5,

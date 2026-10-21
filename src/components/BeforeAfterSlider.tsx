@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { CheckInEntry } from '../store/useCheckInStore';
+import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 
 interface Props {
   beforeEntry?: CheckInEntry;
@@ -24,6 +26,9 @@ export default function BeforeAfterSlider({
   afterEntry,
   containerWidth: customWidth,
 }: Props) {
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
+
   const windowWidth = Dimensions.get('window').width;
   const cardWidth = customWidth ? customWidth - 32 : windowWidth - 32;
   const cardHeight = Math.min(420, cardWidth * 1.25);
@@ -63,13 +68,13 @@ export default function BeforeAfterSlider({
   };
 
   return (
-    <View style={[styles.container, { width: cardWidth }]}>
+    <View style={[styles.container, { width: cardWidth, borderColor: theme.cardBorder }]}>
       {/* Pose Selector Tabs */}
       <View style={styles.poseTabs}>
         {(['front', 'side', 'back', 'detail'] as PoseKey[]).map((pose) => (
           <TouchableOpacity
             key={pose}
-            style={[styles.poseTab, activePose === pose && styles.poseTabActive]}
+            style={[styles.poseTab, activePose === pose && [styles.poseTabActive, { backgroundColor: theme.accent }]]}
             onPress={() => setActivePose(pose)}
           >
             <Text
@@ -110,7 +115,7 @@ export default function BeforeAfterSlider({
         <View
           style={[
             styles.clippedOverlay,
-            { width: sliderPos, height: cardHeight },
+            { width: sliderPos, height: cardHeight, borderRightColor: theme.accent },
           ]}
         >
           <View style={{ width: cardWidth, height: cardHeight }}>
@@ -138,7 +143,7 @@ export default function BeforeAfterSlider({
           style={[styles.dividerLine, { left: sliderPos, height: cardHeight }]}
           {...panResponder.panHandlers}
         >
-          <View style={styles.handleCircle}>
+          <View style={[styles.handleCircle, { backgroundColor: theme.accent, shadowColor: theme.accent }]}>
             <MaterialCommunityIcons name="arrow-left-right" size={16} color="#000" />
           </View>
         </View>

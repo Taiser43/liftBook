@@ -2,8 +2,14 @@ import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, SafeAreaView, Image } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useCoreStore } from '../store/useCoreStore';
+import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
+import { useBottomSpacing } from '../hooks/useBottomSpacing';
 
 export default function CoreLibraryScreen({ navigation }: any) {
+  const bottomSpacing = useBottomSpacing();
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const { searchQuery, activeFilter, setSearchQuery, setActiveFilter, filteredExercises, getAllCategories, favoriteIds, toggleFavorite } = useCoreStore();
 
   const exercises = filteredExercises();
@@ -45,10 +51,10 @@ export default function CoreLibraryScreen({ navigation }: any) {
           keyExtractor={(item) => item}
           renderItem={({ item }) => (
             <TouchableOpacity 
-              style={[styles.filterChip, activeFilter === item && styles.filterChipActive]}
+              style={[styles.filterChip, activeFilter === item && [styles.filterChipActive, { backgroundColor: theme.accentSoftBg, borderColor: theme.accent }]]}
               onPress={() => setActiveFilter(item)}
             >
-              <Text style={[styles.filterChipText, activeFilter === item && styles.filterChipTextActive]}>
+              <Text style={[styles.filterChipText, activeFilter === item && [styles.filterChipTextActive, { color: theme.accent }]]}>
                 {item}
               </Text>
             </TouchableOpacity>
@@ -60,10 +66,10 @@ export default function CoreLibraryScreen({ navigation }: any) {
       <FlatList
         data={exercises}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContainer}
+        contentContainerStyle={[styles.listContainer, { paddingBottom: bottomSpacing }]}
         renderItem={({ item }) => (
           <TouchableOpacity 
-            style={styles.card}
+            style={[styles.card, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder, borderWidth: 1 }]}
             onPress={() => navigation.navigate('CoreDetail', { id: item.id })}
           >
             {item.thumbnailUrl ? (

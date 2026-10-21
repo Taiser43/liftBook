@@ -21,10 +21,12 @@ interface UnitBattleState {
   maxHp: number;
   atk: number;
   isDead: boolean;
-  floatingDmg: { text: string; isCrit?: boolean } | null;
+  floatingDmg: { text: string; isCrit?: boolean; isHeal?: boolean } | null;
   hasShield: boolean;
   isEnraged: boolean;
   atkStacks: number;
+  emergencyHealUsed?: boolean;
+  reviveUsed?: boolean;
 }
 
 // Highly optimized, memoized combat slot
@@ -48,6 +50,7 @@ const CombatUnitSlot = React.memo<{
         data={state.unit}
         isBoard={true}
         size="compact"
+        customWidth={compactWidth}
         overrideHp={state.currentHp}
         isDead={state.isDead}
         floatingDmg={state.floatingDmg}
@@ -69,9 +72,12 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
     trophies,
     getActiveSynergies,
     recordWaveVictory,
+    recordWaveDefeat,
     spawnNextWave,
     triggerBossEncounter,
     saveBoardUnitHps,
+    itemInventory,
+    useConsumableItem,
   } = useAutoChessStore();
 
   const activeArena = getActiveArena(trophies);
@@ -109,6 +115,13 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
   const bossShakeAnim = useRef(new Animated.Value(0)).current;
   const bossThunderFlash = useRef(new Animated.Value(0)).current;
 
+  // Mini-Boss Intro Animation Values
+  const [miniBossIntroVisible, setMiniBossIntroVisible] = useState(false);
+  const miniBossIntroScale = useRef(new Animated.Value(0.3)).current;
+  const miniBossIntroOpacity = useRef(new Animated.Value(0)).current;
+  const miniBossShakeAnim = useRef(new Animated.Value(0)).current;
+  const hasTriggeredMiniBossIntro = useRef(false);
+
   const isFightingRef = useRef(false);
   const nextTurnTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -138,10 +151,12 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
       let itemAtkPct = 0;
       let itemHpPct = 0;
       let hasShield = false;
+      let combatStartHealPct = 0;
       (u.items || []).forEach(it => {
         if (it.stats.atkBonusPct) itemAtkPct += it.stats.atkBonusPct;
         if (it.stats.hpBonusPct) itemHpPct += it.stats.hpBonusPct;
         if (it.trigger === 'shieldFirstHit') hasShield = true;
+        if (it.trigger === 'combatStartHeal') combatStartHealPct += 25;
       });
 
       atkMult += itemAtkPct / 100;
@@ -150,7 +165,10 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
       // CRITICAL FIX: Dead units stay dead (u.hp <= 0) for subsequent waves in the rest pause!
       const totalMaxHp = Math.round(u.maxHp * hpMult);
       const isDead = typeof u.hp === 'number' && u.hp <= 0;
-      const startHp = isDead ? 0 : Math.min(totalMaxHp, Math.round((u.hp !== undefined ? u.hp : u.maxHp) * hpMult));
+      let startHp = isDead ? 0 : Math.min(totalMaxHp, Math.round((u.hp !== undefined ? u.hp : u.maxHp) * hpMult));
+      if (!isDead && combatStartHealPct > 0 && startHp < totalMaxHp) {
+        startHp = Math.min(totalMaxHp, startHp + Math.round(totalMaxHp * (combatStartHealPct / 100)));
+      }
 
       if (!playerLungeAnims[i]) playerLungeAnims[i] = new Animated.Value(0);
       else playerLungeAnims[i].setValue(0);
@@ -226,19 +244,71 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
     ]).start();
   };
 
+  // Start fight execution
+  const beginFight = () => {
+    setCombatPhase('fighting');
+    setBattleResult(null);
+    setResultModalVisible(false);
+    setStatusMessage(enemySquad?.isMiniBoss 
+      ? `👹 MINI-BOSS KAMPF! (+12 🏆 / -6 🏆)` 
+      : `⚔️ Welle ${currentWaveInPause} gestartet!`);
+    isFightingRef.current = true;
+    triggerMedium();
+
+    executeTurn(0, [...playerStates], [...enemyStates], true);
+  };
+
+  // Mini-Boss Intro animation
+  const triggerMiniBossIntroAnimation = () => {
+    setMiniBossIntroVisible(true);
+    miniBossIntroScale.setValue(0.3);
+    miniBossIntroOpacity.setValue(1);
+    miniBossShakeAnim.setValue(0);
+
+    try {
+      Vibration.vibrate([0, 70, 50, 100, 60, 150]);
+    } catch {}
+    triggerHeavy();
+
+    Animated.parallel([
+      Animated.spring(miniBossIntroScale, {
+        toValue: 1,
+        friction: 4,
+        tension: 80,
+        useNativeDriver: true,
+      }),
+      Animated.sequence([
+        Animated.timing(miniBossShakeAnim, { toValue: -10, duration: 40, useNativeDriver: true }),
+        Animated.timing(miniBossShakeAnim, { toValue: 10, duration: 40, useNativeDriver: true }),
+        Animated.timing(miniBossShakeAnim, { toValue: -6, duration: 40, useNativeDriver: true }),
+        Animated.timing(miniBossShakeAnim, { toValue: 6, duration: 40, useNativeDriver: true }),
+        Animated.timing(miniBossShakeAnim, { toValue: 0, duration: 40, useNativeDriver: true }),
+      ]),
+    ]).start();
+
+    setTimeout(() => {
+      Animated.timing(miniBossIntroOpacity, {
+        toValue: 0,
+        duration: 250,
+        useNativeDriver: true,
+      }).start(() => {
+        setMiniBossIntroVisible(false);
+        beginFight();
+      });
+    }, 1900);
+  };
+
   // Start battle
   const startBattle = () => {
     const readyPlayerUnits = playerStates.filter(p => !p.isDead && p.currentHp > 0);
     if (readyPlayerUnits.length === 0 || !enemySquad || enemySquad.units.length === 0) return;
 
-    setCombatPhase('fighting');
-    setBattleResult(null);
-    setResultModalVisible(false);
-    setStatusMessage(`⚔️ Welle ${currentWaveInPause} gestartet!`);
-    isFightingRef.current = true;
-    triggerMedium();
-
-    executeTurn(0, [...playerStates], [...enemyStates], true);
+    if (enemySquad?.isMiniBoss && !hasTriggeredMiniBossIntro.current) {
+      hasTriggeredMiniBossIntro.current = true;
+      triggerMiniBossIntroAnimation();
+    } else {
+      beginFight();
+    }
   };
 
   // Turn-by-Turn execution driven by Native Animation callbacks
@@ -272,6 +342,14 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
 
       const attacker = currPlayers[pIdx];
       const target = currEnemies[targetEnemyIdx];
+
+      // Turn Regeneration: Elektrolyte-Drink / Intra-Workout
+      const turnRegenItem = (attacker.unit.items || []).find(it => it.trigger === 'turnRegen');
+      if (turnRegenItem && attacker.currentHp < attacker.maxHp) {
+        const healAmt = Math.max(1, Math.round(attacker.maxHp * 0.12));
+        attacker.currentHp = Math.min(attacker.maxHp, attacker.currentHp + healAmt);
+        attacker.floatingDmg = { text: `+${healAmt} HP`, isHeal: true };
+      }
 
       // Item Stat Bonuses
       let critChance = attacker.unit.category === 'Chest' ? 0.35 : 0.08;
@@ -339,12 +417,37 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
         shake(enemyShakeAnims[targetEnemyIdx]);
         triggerLight();
 
-        const remainingHp = Math.max(0, target.currentHp - dmg);
-        const isDead = remainingHp <= 0;
-        if (isDead) triggerHeavy();
+        let remainingHp = Math.max(0, target.currentHp - dmg);
+        let isDead = remainingHp <= 0;
+        let targetAtk = target.atk;
+        let healFloatText: string | null = null;
+
+        // Golden Elixir Revive check
+        if (isDead) {
+          const reviveItem = (target.unit.items || []).find(it => it.trigger === 'reviveOrMajorHeal');
+          if (reviveItem && !target.reviveUsed) {
+            target.reviveUsed = true;
+            isDead = false;
+            remainingHp = Math.round(target.maxHp * 0.35);
+            targetAtk = Math.round(target.atk * 1.3);
+            healFloatText = '✨ WIEDERBELEBT!';
+            setStatusMessage(`✨ ${target.unit.exerciseName} trotzt K.O. mit dem Anabolen Elixier!`);
+          } else {
+            triggerHeavy();
+          }
+        } else if (remainingHp <= target.maxHp * 0.35) {
+          // Emergency Dextrose Heal
+          const emergencyItem = (target.unit.items || []).find(it => it.trigger === 'emergencyHeal');
+          if (emergencyItem && !target.emergencyHealUsed) {
+            target.emergencyHealUsed = true;
+            const healAmt = Math.round(target.maxHp * 0.50);
+            remainingHp = Math.min(target.maxHp, remainingHp + healAmt);
+            healFloatText = `💚 +${healAmt} Dextrose!`;
+            setStatusMessage(`💚 Dextrose-Shot rettet ${target.unit.exerciseName} (+${healAmt} HP)!`);
+          }
+        }
 
         // Smelling salts rage trigger (<30% HP)
-        let targetAtk = target.atk;
         if (!target.isEnraged && remainingHp > 0 && remainingHp <= target.maxHp * 0.3) {
           const hasRageItem = (target.unit.items || []).some(it => it.trigger === 'lowHpRage');
           if (hasRageItem) {
@@ -384,7 +487,9 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
           currentHp: remainingHp,
           atk: targetAtk,
           isDead,
-          floatingDmg: { text: isBlocked ? '🛡️ BLOCKED' : `-${dmg}`, isCrit },
+          floatingDmg: healFloatText 
+            ? { text: healFloatText, isHeal: true }
+            : { text: isBlocked ? '🛡️ BLOCKED' : `-${dmg}`, isCrit },
         };
         setEnemyStates([...currEnemies]);
         setPlayerStates([...currPlayers]);
@@ -410,6 +515,14 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
 
       const attacker = currEnemies[eIdx];
       const target = currPlayers[targetPlayerIdx];
+
+      // Turn Regeneration: Elektrolyte-Drink on enemy
+      const turnRegenItem = (attacker.unit.items || []).find(it => it.trigger === 'turnRegen');
+      if (turnRegenItem && attacker.currentHp < attacker.maxHp) {
+        const healAmt = Math.max(1, Math.round(attacker.maxHp * 0.12));
+        attacker.currentHp = Math.min(attacker.maxHp, attacker.currentHp + healAmt);
+        attacker.floatingDmg = { text: `+${healAmt} HP`, isHeal: true };
+      }
 
       let critChance = 0.08;
       let critMult = 1.5;
@@ -474,11 +587,36 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
         shake(playerShakeAnims[targetPlayerIdx]);
         triggerLight();
 
-        const remainingHp = Math.max(0, target.currentHp - dmg);
-        const isDead = remainingHp <= 0;
-        if (isDead) triggerHeavy();
-
+        let remainingHp = Math.max(0, target.currentHp - dmg);
+        let isDead = remainingHp <= 0;
         let targetAtk = target.atk;
+        let healFloatText: string | null = null;
+
+        // Player Golden Elixir Revive check
+        if (isDead) {
+          const reviveItem = (target.unit.items || []).find(it => it.trigger === 'reviveOrMajorHeal');
+          if (reviveItem && !target.reviveUsed) {
+            target.reviveUsed = true;
+            isDead = false;
+            remainingHp = Math.round(target.maxHp * 0.35);
+            targetAtk = Math.round(target.atk * 1.3);
+            healFloatText = '✨ WIEDERBELEBT!';
+            setStatusMessage(`✨ ${target.unit.exerciseName} trotzt K.O. mit dem Anabolen Elixier!`);
+          } else {
+            triggerHeavy();
+          }
+        } else if (remainingHp <= target.maxHp * 0.35) {
+          // Emergency Dextrose Heal
+          const emergencyItem = (target.unit.items || []).find(it => it.trigger === 'emergencyHeal');
+          if (emergencyItem && !target.emergencyHealUsed) {
+            target.emergencyHealUsed = true;
+            const healAmt = Math.round(target.maxHp * 0.50);
+            remainingHp = Math.min(target.maxHp, remainingHp + healAmt);
+            healFloatText = `💚 +${healAmt} Dextrose!`;
+            setStatusMessage(`💚 Dextrose-Shot rettet ${target.unit.exerciseName} (+${healAmt} HP)!`);
+          }
+        }
+
         if (!target.isEnraged && remainingHp > 0 && remainingHp <= target.maxHp * 0.3) {
           const hasRageItem = (target.unit.items || []).some(it => it.trigger === 'lowHpRage');
           if (hasRageItem) {
@@ -516,7 +654,9 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
           currentHp: remainingHp,
           atk: targetAtk,
           isDead,
-          floatingDmg: { text: isBlocked ? '🛡️ BLOCKED' : `-${dmg}`, isCrit },
+          floatingDmg: healFloatText 
+            ? { text: healFloatText, isHeal: true }
+            : { text: isBlocked ? '🛡️ BLOCKED' : `-${dmg}`, isCrit },
         };
         setPlayerStates([...currPlayers]);
         setEnemyStates([...currEnemies]);
@@ -581,8 +721,9 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
         setLootModalVisible(true);
       }
     } else {
-      setEarnedTrophies(0);
-      setEarnedCoins(0);
+      const defeatRewards = recordWaveDefeat(isMiniBoss);
+      setEarnedTrophies(defeatRewards.trophiesLost > 0 ? -defeatRewards.trophiesLost : 0);
+      setEarnedCoins(defeatRewards.coinsGained);
       triggerWarning();
     }
 
@@ -591,6 +732,7 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
 
   // User selects "Nächste Welle fordern"
   const handleNextWave = () => {
+    hasTriggeredMiniBossIntro.current = false;
     setResultModalVisible(false);
     setCombatPhase('idle');
     setBattleResult(null);
@@ -599,6 +741,7 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
 
   // User selects "Zum Shop & Team"
   const handleToShop = () => {
+    hasTriggeredMiniBossIntro.current = false;
     setResultModalVisible(false);
     setCombatPhase('idle');
     setBattleResult(null);
@@ -667,7 +810,18 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
     }, 2100);
   };
 
-  const compactWidth = Math.max(76, Math.min(104, Math.floor((SCREEN_WIDTH - 36) / Math.max(3, activeUnits.length))));
+  // Dynamic card width to guarantee all units fit in a single row without wrapping or pushing the screen down
+  const maxUnitsInRow = Math.max(
+    3,
+    enemyStates.length,
+    playerStates.length,
+    (enemySquad?.units || []).length,
+    activeUnits.length
+  );
+  const spacingGap = maxUnitsInRow >= 5 ? 3 : maxUnitsInRow >= 4 ? 4 : 6;
+  const totalGaps = (maxUnitsInRow - 1) * spacingGap;
+  const availableWidth = SCREEN_WIDTH - 24 - totalGaps;
+  const compactWidth = Math.max(62, Math.min(104, Math.floor(availableWidth / maxUnitsInRow)));
 
   return (
     <View style={styles.container}>
@@ -777,10 +931,12 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
                   enemySquad?.isMiniBoss && { color: '#FF9500' }
                 ]}
               >
-                {enemySquad?.name || 'Gym Rogue'}
+                {enemySquad?.isBoss ? '🏰 Der Schatten-Titan' : enemySquad?.name || 'Gym Rogue'}
               </Text>
               <Text style={styles.teamSubtitle}>
-                {enemySquad?.bossSubtitle || `Welle ${currentWaveInPause} • Satz ${round} • Gegner`}
+                {enemySquad?.isBoss 
+                  ? '🏰 Schloss des Titans • Endgegner deines Workouts' 
+                  : (enemySquad?.bossSubtitle || `Weg zum Schloss 🏰 • Welle ${currentWaveInPause} • Satz ${round}`)}
               </Text>
             </View>
           </View>
@@ -826,6 +982,33 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
           </TouchableOpacity>
         )}
 
+        {/* Quick Revive Action if any units are dead and player has a consumable */}
+        {combatPhase === 'idle' && (() => {
+          const deadUnit = board.find(u => u !== null && (typeof u.hp === 'number' && u.hp <= 0));
+          const consumable = (itemInventory || []).find(it => it.isConsumable);
+          if (deadUnit && consumable) {
+            return (
+              <TouchableOpacity
+                style={styles.quickReviveBanner}
+                onPress={() => {
+                  const ok = useConsumableItem(consumable.id, deadUnit.instanceId);
+                  if (ok) {
+                    triggerSuccess();
+                    setupBattle();
+                    setStatusMessage(`💚 ${deadUnit.exerciseName} durch ${consumable.name} wiederbelebt!`);
+                  }
+                }}
+              >
+                <MaterialCommunityIcons name="heart-flash" size={16} color="#FFF" style={{ marginRight: 6 }} />
+                <Text style={styles.quickReviveBannerText}>
+                  {deadUnit.exerciseName} wiederbeleben (1x {consumable.name}) ⚡
+                </Text>
+              </TouchableOpacity>
+            );
+          }
+          return null;
+        })()}
+
         {combatPhase === 'idle' && (
           <TouchableOpacity
             style={[styles.startBtn, aliveUnits.length === 0 && styles.btnDisabled]}
@@ -837,8 +1020,10 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
               {aliveUnits.length === 0 
                 ? 'Truppen K.O.! (Heilung bei neuem Satz)' 
                 : enemySquad?.isBoss 
-                  ? 'Titan-Kampf beginnen! 👑' 
-                  : `Welle ${currentWaveInPause} starten! ⚔️`}
+                  ? '🏰 Schloss betreten: Titan-Kampf! 👑' 
+                  : enemySquad?.isMiniBoss
+                    ? `👹 Mini-Boss herausfordern! (+12 🏆 / -6 🏆)`
+                    : `Welle ${currentWaveInPause} starten! ⚔️`}
             </Text>
           </TouchableOpacity>
         )}
@@ -920,19 +1105,23 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
               </Text>
               <Text style={styles.modalTitle}>
                 {battleResult === 'victory' 
-                  ? (enemySquad?.isBoss ? 'TITAN BEZWUNGEN!' : (enemySquad?.isMiniBoss ? 'MINI-BOSS BESIEGT!' : `WELLE ${currentWaveInPause} GEWONNEN!`)) 
-                  : (enemySquad?.isMiniBoss ? 'VOM MINI-BOSS BEZWUNGEN!' : `WELLE ${currentWaveInPause} VERLOREN!`)}
+                  ? (enemySquad?.isBoss ? '🏰 TITAN BEZWUNGEN!' : (enemySquad?.isMiniBoss ? 'MINI-BOSS BESIEGT!' : `WELLE ${currentWaveInPause} GEWONNEN!`)) 
+                  : (enemySquad?.isBoss ? '🏰 VOM TITAN IM SCHLOSS BEZWUNGEN!' : enemySquad?.isMiniBoss ? 'VOM MINI-BOSS BEZWUNGEN!' : `WELLE ${currentWaveInPause} VERLOREN!`)}
               </Text>
               <Text style={styles.modalSubhead}>
                 {battleResult === 'victory'
                   ? (enemySquad?.isBoss
-                      ? 'Epischer Sieg gegen den Titan! +25 🏆 Pokale für deinen Trophäen-Pfad verdient!'
+                      ? 'Epischer Sieg im Schloss des Titans! +25 🏆 Pokale für deinen Trophäen-Pfad verdient!'
                       : (enemySquad?.isMiniBoss
-                          ? 'Du hast den Mini-Boss bezwungen und wertvolle Gym-Beute ergattert!'
+                          ? 'Du hast den Mini-Boss bezwungen! +12 🏆 Pokale & Beute erbeutet!'
                           : (survivingUnitsCount > 0 
                               ? `${survivingUnitsCount} Einheiten haben überlebt • +1 Satz-Stack aufgebaut!` 
                               : 'Knapper Sieg! Deine Truppen sind erschöpft.')))
-                  : 'Deine Truppen wurden K.O. geschlagen!'}
+                  : (enemySquad?.isBoss
+                      ? 'Der Schatten-Titan hat dein Team überwältigt! Stärke deine Einheiten im Shop und versuche es erneut!'
+                      : enemySquad?.isMiniBoss
+                        ? 'Du hast gegen den Mini-Boss verloren (-6 🏆 Pokale), erhältst aber 2 Trost-Plates für den Shop.'
+                        : 'Deine Truppen wurden K.O. geschlagen!')}
               </Text>
             </View>
 
@@ -940,10 +1129,10 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
             {battleResult === 'victory' && (
               <View style={styles.rewardsRow}>
                 {earnedTrophies > 0 ? (
-                  <View style={[styles.rewardPill, styles.rewardPillBoss]}>
+                  <View style={[styles.rewardPill, enemySquad?.isMiniBoss ? { borderColor: '#FF9500', backgroundColor: 'rgba(255, 149, 0, 0.15)' } : styles.rewardPillBoss]}>
                     <Text style={styles.rewardIcon}>🏆</Text>
-                    <Text style={[styles.rewardValue, { color: '#FFD700' }]}>+{earnedTrophies}</Text>
-                    <Text style={styles.rewardLabel}>Pokale (Boss-Sieg!)</Text>
+                    <Text style={[styles.rewardValue, { color: enemySquad?.isMiniBoss ? '#FF9500' : '#FFD700' }]}>+{earnedTrophies}</Text>
+                    <Text style={styles.rewardLabel}>{enemySquad?.isMiniBoss ? 'Pokale (Mini-Boss!)' : 'Pokale (Boss-Sieg!)'}</Text>
                   </View>
                 ) : (
                   <View style={styles.rewardPill}>
@@ -970,6 +1159,31 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
               </View>
             )}
 
+            {/* Consolation Bounty (if defeat) */}
+            {battleResult === 'defeat' && (
+              <View style={styles.rewardsRow}>
+                {earnedTrophies < 0 ? (
+                  <View style={[styles.rewardPill, { borderColor: '#FF453A80', backgroundColor: 'rgba(255, 69, 58, 0.15)' }]}>
+                    <Text style={styles.rewardIcon}>💀</Text>
+                    <Text style={[styles.rewardValue, { color: '#FF453A' }]}>{earnedTrophies}</Text>
+                    <Text style={styles.rewardLabel}>Pokale (Mini-Boss!)</Text>
+                  </View>
+                ) : null}
+                {earnedCoins > 0 && (
+                  <View style={[styles.rewardPill, { borderColor: 'rgba(255, 215, 0, 0.4)', backgroundColor: 'rgba(255, 215, 0, 0.08)' }]}>
+                    <WeightPlateIcon size={24} color="#FFD700" style={{ marginBottom: 4 }} />
+                    <Text style={[styles.rewardValue, { color: '#FFD700' }]}>+{earnedCoins}</Text>
+                    <Text style={styles.rewardLabel}>Trost-Münzen</Text>
+                  </View>
+                )}
+                <View style={[styles.rewardPill, { borderColor: 'rgba(0, 210, 255, 0.3)', backgroundColor: 'rgba(0, 210, 255, 0.06)' }]}>
+                  <Text style={styles.rewardIcon}>🛡️</Text>
+                  <Text style={[styles.rewardValue, { color: '#00D2FF' }]}>Shop</Text>
+                  <Text style={styles.rewardLabel}>Team verstärken</Text>
+                </View>
+              </View>
+            )}
+
             {/* Highlighted Wave Bonus Card */}
             <View style={styles.waveBonusCard}>
               <View style={styles.waveBonusHeaderRow}>
@@ -987,7 +1201,7 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
               {!enemySquad?.isBoss && (
                 <View style={styles.trophyInfoBox}>
                   <Text style={styles.trophyInfoText}>
-                    💡 Pokale (+25 🏆) gibt es beim Sieg gegen den Schatten-Titan am Ende des Trainings!
+                    💡 Pokale gibt es bei Mini-Bossen (+12 🏆) und dem finalen Schatten-Titan (+25 🏆)!
                   </Text>
                 </View>
               )}
@@ -1086,7 +1300,54 @@ export const AutoChessCombatView: React.FC<Props> = ({ onBackToTeam }) => {
         </Animated.View>
       )}
 
-      {/* 7. MINI-BOSS LOOT REVEAL MODAL */}
+      {/* 7. MINI-BOSS INTRO OVERLAY */}
+      {miniBossIntroVisible && (
+        <Animated.View
+          style={[
+            styles.miniBossIntroOverlay,
+            {
+              opacity: miniBossIntroOpacity,
+              transform: [{ scale: miniBossIntroScale }, { translateX: miniBossShakeAnim }],
+            },
+          ]}
+          pointerEvents="none"
+        >
+          <View style={styles.miniBossIntroCard}>
+            <View style={styles.miniBossWarningTag}>
+              <MaterialCommunityIcons name="alert" size={15} color="#FF9500" style={{ marginRight: 6 }} />
+              <Text style={styles.miniBossWarningText}>WARNUNG • MINI-BOSS ERSCHIENEN</Text>
+            </View>
+
+            <View style={styles.miniBossAvatarCircle}>
+              <MaterialCommunityIcons 
+                name={(enemySquad?.avatar as any) || 'skull'} 
+                size={50} 
+                color="#FF9500" 
+              />
+            </View>
+
+            <Text style={styles.miniBossIntroTitle}>
+              {enemySquad?.name || 'Mini-Boss'}
+            </Text>
+            <Text style={styles.miniBossIntroSub}>
+              {enemySquad?.bossSubtitle || `Welle ${currentWaveInPause}`}
+            </Text>
+
+            <View style={styles.miniBossStakeBox}>
+              <View style={styles.miniBossStakeRow}>
+                <Text style={styles.miniBossStakeIcon}>🏆</Text>
+                <Text style={styles.miniBossStakeWin}>Sieg: +12 Pokale & Loot-Drop!</Text>
+              </View>
+              <View style={styles.miniBossStakeRow}>
+                <Text style={styles.miniBossStakeIcon}>💀</Text>
+                <Text style={styles.miniBossStakeLoss}>Niederlage: -6 Pokale</Text>
+              </View>
+            </View>
+          </View>
+        </Animated.View>
+      )}
+
+      {/* 8. MINI-BOSS LOOT REVEAL MODAL */}
       <AutoChessLootModal
         visible={lootModalVisible}
         item={lootModalItem}
@@ -1263,7 +1524,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 2,
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
   },
   centerHUD: {
     paddingVertical: 4,
@@ -1609,5 +1870,124 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     textAlign: 'center',
+  },
+  miniBossIntroOverlay: {
+    ...(StyleSheet.absoluteFill as object),
+    backgroundColor: 'rgba(5, 5, 10, 0.90)',
+    zIndex: 999,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  miniBossIntroCard: {
+    width: '92%',
+    backgroundColor: '#16120E',
+    borderColor: '#FF9500',
+    borderWidth: 2,
+    borderRadius: 20,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    shadowColor: '#FF9500',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.65,
+    shadowRadius: 16,
+    elevation: 20,
+  },
+  miniBossWarningTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FF950025',
+    borderColor: '#FF950090',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    marginBottom: 14,
+  },
+  miniBossWarningText: {
+    color: '#FF9500',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  miniBossAvatarCircle: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: '#FF950020',
+    borderColor: '#FF9500',
+    borderWidth: 2.5,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  miniBossIntroTitle: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 1,
+    textAlign: 'center',
+    textShadowColor: '#FF9500',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+  },
+  miniBossIntroSub: {
+    color: '#FFD7A8',
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  miniBossStakeBox: {
+    width: '100%',
+    backgroundColor: '#0E0B08',
+    borderColor: '#FF950050',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    gap: 6,
+  },
+  miniBossStakeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  miniBossStakeIcon: {
+    fontSize: 14,
+  },
+  miniBossStakeWin: {
+    color: '#30D158',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  miniBossStakeLoss: {
+    color: '#FF453A',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  quickReviveBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FF453A',
+    borderColor: '#FF6961',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    marginBottom: 8,
+    shadowColor: '#FF453A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.6,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  quickReviveBannerText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '900',
   },
 });

@@ -12,6 +12,7 @@ import { useAppStore, getLocalDateString } from '../store/store';
 import { getSevenDayWeightStats, getWorkoutStats, getNutritionStats } from '../utils/checkInEngine';
 import CheckInModal from './CheckInModal';
 import CheckInReportModal from './CheckInReportModal';
+import { getAppTheme } from '../utils/theme';
 
 interface Props {
   containerWidth: number;
@@ -24,7 +25,8 @@ export default function CheckInWidget({ containerWidth }: Props) {
 
   const today = getLocalDateString();
   const { phaseConfig, checkInHistory } = useCheckInStore();
-  const { weightHistory, workoutHistory, nutritionHistory, targets, bodyweight } = useAppStore();
+  const { weightHistory, workoutHistory, nutritionHistory, targets, bodyweight, accentThemeId } = useAppStore();
+  const theme = getAppTheme(accentThemeId);
 
   // Berechne aktuelle Wochennummer in der Phase
   const calculateCurrentWeek = () => {
@@ -45,18 +47,18 @@ export default function CheckInWidget({ containerWidth }: Props) {
   const workoutStats = getWorkoutStats(today, workoutHistory);
   const nutritionStats = getNutritionStats(today, nutritionHistory, targets.calories, targets.protein);
 
-  const goalColor = phaseConfig.goal === 'Bulk' ? '#FF9500' : phaseConfig.goal === 'Cut' ? '#FF453A' : '#00D2FF';
+  const goalColor = phaseConfig.goal === 'Bulk' ? '#FF9500' : phaseConfig.goal === 'Cut' ? '#FF453A' : theme.accent;
 
   // Letztes Vorwochen-Foto für Thumbnail
   const latestWithPhoto = checkInHistory.find((c) => c.photos?.front);
   const photoUri = latestWithPhoto?.photos?.front;
 
   return (
-    <View style={[styles.container, { width: containerWidth }]}>
+    <View style={[styles.container, { width: containerWidth, backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]}>
       {/* Widget Header */}
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
-          <View style={styles.goalPill}>
+          <View style={[styles.goalPill, { backgroundColor: theme.subCardBg, borderColor: theme.subtleBorder }]}>
             <Text style={[styles.goalPillText, { color: goalColor }]}>
               {phaseConfig.goal === 'Bulk' ? '🍗 LEAN BULK' : phaseConfig.goal === 'Cut' ? '🔥 CUT' : '⚖️ RECOMP'}
             </Text>
@@ -94,15 +96,15 @@ export default function CheckInWidget({ containerWidth }: Props) {
           </Text>
         </View>
         <TouchableOpacity
-          style={styles.hubOpenIconBtn}
+          style={[styles.hubOpenIconBtn, { backgroundColor: theme.subCardBg, borderColor: theme.subtleBorder }]}
           onPress={() => setHubModalVisible(true)}
         >
-          <MaterialCommunityIcons name="open-in-new" size={18} color="#00D2FF" />
+          <MaterialCommunityIcons name="open-in-new" size={18} color={theme.accent} />
         </TouchableOpacity>
       </View>
 
       {/* 3 Quick KPI Columns */}
-      <View style={styles.kpiRow}>
+      <View style={[styles.kpiRow, { backgroundColor: theme.subCardBg, borderColor: theme.subtleBorder }]}>
         {/* KPI 1: Weight */}
         <View style={styles.kpiCol}>
           <Text style={styles.kpiLabel}>7-Tage-Schnitt</Text>
@@ -123,7 +125,7 @@ export default function CheckInWidget({ containerWidth }: Props) {
         <View style={styles.kpiCol}>
           <Text style={styles.kpiLabel}>Workouts</Text>
           <Text style={styles.kpiVal}>{workoutStats.workoutsCompleted} / 4</Text>
-          <Text style={[styles.kpiSub, { color: '#00D2FF' }]}>
+          <Text style={[styles.kpiSub, { color: theme.accent }]}>
             {workoutStats.volumeDeltaPercent >= 0 ? `+${workoutStats.volumeDeltaPercent}% Vol` : `${workoutStats.volumeDeltaPercent}% Vol`}
           </Text>
         </View>
@@ -208,7 +210,7 @@ export default function CheckInWidget({ containerWidth }: Props) {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={styles.startBtn}
+            style={[styles.startBtn, { backgroundColor: theme.accent }]}
             onPress={() => setHubModalVisible(true)}
           >
             <MaterialCommunityIcons name="lightning-bolt" size={16} color="#000" />
@@ -237,12 +239,12 @@ export default function CheckInWidget({ containerWidth }: Props) {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#18181A',
-    borderRadius: 18,
+    backgroundColor: '#161C22',
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#282828',
-    marginBottom: 16,
+    borderColor: 'rgba(0, 210, 255, 0.28)',
+    marginBottom: 0,
   },
   headerRow: {
     flexDirection: 'row',

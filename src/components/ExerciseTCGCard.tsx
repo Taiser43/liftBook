@@ -5,6 +5,7 @@ import { LineChart } from 'react-native-chart-kit';
 import { useAppStore } from '../store/store';
 import { PRELOADED_EXERCISES } from '../data/exercises';
 import { getLevelData } from '../utils/gamification';
+import { getAppTheme } from '../utils/theme';
 
 const { width, height } = Dimensions.get('window');
 
@@ -15,7 +16,8 @@ interface Props {
 }
 
 export const ExerciseTCGCard = ({ visible, onClose, exerciseName }: Props) => {
-  const { workoutHistory, customExercises } = useAppStore();
+  const { workoutHistory, customExercises, accentThemeId } = useAppStore();
+  const theme = getAppTheme(accentThemeId);
   const allExercises = [...PRELOADED_EXERCISES, ...(customExercises || [])];
   const [flipped, setFlipped] = useState(false);
   const flipAnim = useRef(new Animated.Value(0)).current;
@@ -188,11 +190,11 @@ export const ExerciseTCGCard = ({ visible, onClose, exerciseName }: Props) => {
                       width={width * 0.75}
                       height={200}
                       chartConfig={{
-                        backgroundColor: '#1E1E1E',
-                        backgroundGradientFrom: '#1E1E1E',
-                        backgroundGradientTo: '#1E1E1E',
+                        backgroundColor: theme.cardBg || '#1E1E1E',
+                        backgroundGradientFrom: theme.cardBg || '#1E1E1E',
+                        backgroundGradientTo: theme.cardBg || '#1E1E1E',
                         decimalPlaces: 0,
-                        color: (opacity = 1) => `rgba(0, 210, 255, ${opacity})`,
+                        color: (opacity = 1) => `rgba(${theme.accentRgb || '0, 210, 255'}, ${opacity})`,
                         labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
                         style: { borderRadius: 16 },
                         propsForDots: { r: "6", strokeWidth: "2", stroke: borderColor }

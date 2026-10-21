@@ -26,6 +26,8 @@ import {
   DownloadProgress
 } from '../services/youtubeDownloadService';
 import { useMusicStore } from '../store/useMusicStore';
+import { useAppStore } from '../store/store';
+import { getAppTheme } from '../utils/theme';
 
 interface Props {
   visible: boolean;
@@ -35,6 +37,8 @@ interface Props {
 const { width, height: screenHeight } = Dimensions.get('window');
 
 export default function YouTubeDownloaderModal({ visible, onClose }: Props) {
+  const accentThemeId = useAppStore(state => state.accentThemeId);
+  const theme = getAppTheme(accentThemeId);
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [playlistInfo, setPlaylistInfo] = useState<YouTubePlaylistInfo | null>(null);
@@ -182,7 +186,10 @@ export default function YouTubeDownloaderModal({ visible, onClose }: Props) {
         setIsDownloading(false);
         setStoreDownloadProgress(null);
         Alert.alert("Download-Fehler", err);
-      }
+      },
+      0,
+      [],
+      playlistInfo.thumbnailUrl
     );
   };
 
@@ -194,7 +201,7 @@ export default function YouTubeDownloaderModal({ visible, onClose }: Props) {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
         style={styles.container}
       >
-        <View style={[styles.card, (playlistInfo || isDownloading) && styles.cardExpanded]}>
+        <View style={[styles.card, (playlistInfo || isDownloading) && styles.cardExpanded, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder, borderWidth: 1 }]}>
           {/* Header */}
           <View style={styles.header}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -222,7 +229,7 @@ export default function YouTubeDownloaderModal({ visible, onClose }: Props) {
 
               {/* Progress Bar */}
               <View style={styles.progressBarBg}>
-                <View style={[styles.progressBarFill, { width: `${progressState.progressPercent}%` }]} />
+                <View style={[styles.progressBarFill, { width: `${progressState.progressPercent}%`, backgroundColor: theme.accent }]} />
               </View>
 
               <View style={styles.progressMetaRow}>
@@ -237,10 +244,10 @@ export default function YouTubeDownloaderModal({ visible, onClose }: Props) {
               </Text>
 
               {/* Standby & Background Info Card */}
-              <View style={styles.standbyInfoBox}>
-                <MaterialCommunityIcons name="car-connected" size={20} color="#00D2FF" style={{ marginRight: 10 }} />
+              <View style={[styles.standbyInfoBox, { backgroundColor: theme.accentSoftBg, borderColor: theme.accentBorder }]}>
+                <MaterialCommunityIcons name="car-connected" size={20} color={theme.accent} style={{ marginRight: 10 }} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.standbyInfoTitle}>Standby- & Hintergrund aktiv</Text>
+                  <Text style={[styles.standbyInfoTitle, { color: theme.accent }]}>Standby- & Hintergrund aktiv</Text>
                   <Text style={styles.standbyInfoText}>
                     Du kannst dein Handy sperren oder andere Apps nutzen (z.B. Navi beim Autofahren ins Gym). Der Download läuft weiter und du siehst den Fortschritt auf dem Sperrbildschirm.
                   </Text>
@@ -252,8 +259,8 @@ export default function YouTubeDownloaderModal({ visible, onClose }: Props) {
                   style={styles.backgroundContinueBtn}
                   onPress={onClose}
                 >
-                  <MaterialCommunityIcons name="arrow-down-circle" size={16} color="#00D2FF" style={{ marginRight: 6 }} />
-                  <Text style={styles.backgroundContinueBtnText}>Im Hintergrund fortsetzen</Text>
+                  <MaterialCommunityIcons name="arrow-down-circle" size={16} color={theme.accent} style={{ marginRight: 6 }} />
+                  <Text style={[styles.backgroundContinueBtnText, { color: theme.accent }]}>Im Hintergrund fortsetzen</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
@@ -306,7 +313,7 @@ export default function YouTubeDownloaderModal({ visible, onClose }: Props) {
                   </View>
 
                   <TouchableOpacity
-                    style={[styles.fetchBtn, loading && { opacity: 0.7 }]}
+                    style={[styles.fetchBtn, { backgroundColor: theme.accent }, loading && { opacity: 0.7 }]}
                     onPress={handleFetchPlaylist}
                     disabled={loading}
                   >
@@ -323,8 +330,8 @@ export default function YouTubeDownloaderModal({ visible, onClose }: Props) {
                     )}
                   </TouchableOpacity>
 
-                  <View style={styles.tipBox}>
-                    <MaterialCommunityIcons name="information-outline" size={18} color="#00D2FF" style={{ marginRight: 8 }} />
+                  <View style={[styles.tipBox, { borderColor: theme.accentBorderSoft }]}>
+                    <MaterialCommunityIcons name="information-outline" size={18} color={theme.accent} style={{ marginRight: 8 }} />
                     <Text style={styles.tipText}>
                       Tipp: Die Lieder werden direkt auf deinem Gerät in bester Qualität (bis zu 320 kbps MP3) gespeichert und sind offline im Gym verfügbar.
                     </Text>
@@ -395,7 +402,7 @@ export default function YouTubeDownloaderModal({ visible, onClose }: Props) {
                           <MaterialCommunityIcons
                             name={track.selected !== false ? "checkbox-marked" : "checkbox-blank-outline"}
                             size={22}
-                            color={track.selected !== false ? "#00D2FF" : "#666"}
+                            color={track.selected !== false ? theme.accent : "#666"}
                             style={{ marginRight: 10 }}
                           />
                           <View style={{ flex: 1 }}>
@@ -409,7 +416,7 @@ export default function YouTubeDownloaderModal({ visible, onClose }: Props) {
 
                   {/* Start Download Button */}
                   <TouchableOpacity
-                    style={[styles.startDownloadBtn, selectedCount === 0 && { opacity: 0.5 }]}
+                    style={[styles.startDownloadBtn, { backgroundColor: theme.accent }, selectedCount === 0 && { opacity: 0.5 }]}
                     onPress={startDownload}
                     disabled={selectedCount === 0}
                   >

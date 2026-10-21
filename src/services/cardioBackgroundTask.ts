@@ -16,18 +16,21 @@ export interface BgCoord {
   latitude: number;
   longitude: number;
   timestamp: number;
+  altitude: number;
   speed: number | null; // m/s or null
+  accuracy?: number;
   heartRate?: number;
 }
 
 const STORAGE_KEY = '@cardio_bg_coords';
 
-/** Append a coordinate to AsyncStorage so the foreground can pick it up */
-async function appendCoord(coord: BgCoord) {
+/** Append a batch of coordinates to AsyncStorage so foreground can read all accumulated points */
+async function appendCoordsBatch(coords: BgCoord[]) {
+  if (coords.length === 0) return;
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     const arr: BgCoord[] = raw ? JSON.parse(raw) : [];
-    arr.push(coord);
+    arr.push(...coords);
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
   } catch (e) {
     // Silently ignore
@@ -49,7 +52,7 @@ export async function clearBgCoords(): Promise<void> {
   await AsyncStorage.removeItem(STORAGE_KEY);
 }
 
-/** Register the background task definition */
+/** Register the background task definition with complete batch iteration */
 TaskManager.defineTask(CARDIO_LOCATION_TASK, async ({ data, error }: any) => {
   if (error) {
     console.warn('[CardioTask] Error:', error.message);
@@ -58,15 +61,26 @@ TaskManager.defineTask(CARDIO_LOCATION_TASK, async ({ data, error }: any) => {
   if (data) {
     const { locations } = data as { locations: Location.LocationObject[] };
     if (locations && locations.length > 0) {
-      const loc = locations[locations.length - 1];
       const hr = useAppStore.getState().currentHeartRate;
-      appendCoord({
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-        timestamp: loc.timestamp,
-        speed: loc.coords.speed,
-        heartRate: hr === null ? undefined : hr,
-      });
+      const validCoords: BgCoord[] = [];
+      for (const loc of locations) {
+        // Discard low-accuracy jitter (>25m) to keep the route clean
+        if (loc.coords.accuracy && loc.coords.accuracy > 25) {
+          continue;
+        }
+        validCoords.push({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+          timestamp: loc.timestamp,
+          altitude: loc.coords.altitude ?? 0,
+          speed: loc.coords.speed ?? 0,
+          accuracy: loc.coords.accuracy ?? undefined,
+          heartRate: hr === null ? undefined : hr,
+        });
+      }
+      if (validCoords.length > 0) {
+        await appendCoordsBatch(validCoords);
+      }
     }
   }
 });
@@ -89,8 +103,8 @@ export async function startBgLocationTracking(): Promise<boolean> {
         pausesUpdatesAutomatically: false,
         showsBackgroundLocationIndicator: true,
         foregroundService: {
-          notificationTitle: '🏃 Cardio Tracking',
-          notificationBody: 'Your route and pace are being recorded.',
+          notificationTitle: '🏃 Cardio Tracking [LIVE]',
+          notificationBody: 'Route, Distanz & Pace werden im Ruhemodus aufgezeichnet.',
           notificationColor: '#00D2FF',
         },
         activityType: Location.ActivityType.Fitness,

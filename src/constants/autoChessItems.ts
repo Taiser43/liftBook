@@ -12,7 +12,11 @@ export type ItemTrigger =
   | 'armorPen'
   | 'synergyBoost'
   | 'oneHitProtection'
-  | 'regenOnKill';
+  | 'regenOnKill'
+  | 'turnRegen'
+  | 'combatStartHeal'
+  | 'emergencyHeal'
+  | 'reviveOrMajorHeal';
 
 export interface AutoChessItem {
   id: string;
@@ -22,6 +26,7 @@ export interface AutoChessItem {
   cost: number;
   description: string;
   flavorText: string;
+  isConsumable?: boolean;
   stats: {
     atkBonusPct?: number;
     hpBonusPct?: number;
@@ -36,6 +41,10 @@ export interface AutoChessItem {
     cleavePct?: number;
     maxDmgPerHitPct?: number;
     regenOnKillPct?: number;
+    turnRegenPct?: number;
+    combatStartHealPct?: number;
+    emergencyHealPct?: number;
+    reviveHpPct?: number;
   };
   trigger?: ItemTrigger;
 }
@@ -117,8 +126,54 @@ export const AUTO_CHESS_ITEMS: AutoChessItem[] = [
     stats: {},
     trigger: 'shieldFirstHit',
   },
+  {
+    id: 'electrolyte_drink',
+    name: 'Elektrolyte & Intra-Drink',
+    icon: 'bottle-tonic-plus',
+    rarity: 'common',
+    cost: 3,
+    description: 'Regeneration: Heilt die Einheit vor jedem eigenen Angriff um +12% Max-HP.',
+    flavorText: 'Schnelle Hydrierung gegen Muskelkrämpfe bei langen Sätzen.',
+    stats: { hpBonusPct: 15, turnRegenPct: 12 },
+    trigger: 'turnRegen',
+  },
+  {
+    id: 'kinesio_tape',
+    name: 'Kinesio-Tape & Eis-Kompresse',
+    icon: 'bandage',
+    rarity: 'common',
+    cost: 3,
+    description: 'Erstversorgung: Heilt den Träger zu Kampfbeginn sofort um +25% Max-HP.',
+    flavorText: 'Sofortige Stabilisierung für gereizte Bänder und Sehnen.',
+    stats: { hpBonusPct: 10, combatStartHealPct: 25 },
+    trigger: 'combatStartHeal',
+  },
+  {
+    id: 'trauma_ice_pack',
+    name: 'Erste-Hilfe Eis- & Traumapack',
+    icon: 'medical-bag',
+    rarity: 'common',
+    cost: 3,
+    isConsumable: true,
+    description: 'Feld-Heilung: Stellt 50% HP einer verletzten Einheit wieder her (oder belebt K.O.-Einheit mit 50% HP).',
+    flavorText: 'Sofortige Schmerzlinderung und Abschwellung zwischen den Runden.',
+    stats: { hpBonusPct: 0 },
+    trigger: 'combatStartHeal',
+  },
 
   // ── RARE ITEMS (5 Plates / 28% Drop) ────────────────────────────────
+  {
+    id: 'revive_salts',
+    name: 'Riechsalz-Defibrillator',
+    icon: 'heart-flash',
+    rarity: 'rare',
+    cost: 5,
+    isConsumable: true,
+    description: 'Sofort-Wiederbelebung: Belebt eine K.O.-Einheit sofort mit 100% HP wieder auf!',
+    flavorText: 'Ein kräftiger Zug und die K.O.-Einheit steht wieder voll einsatzbereit an der Hantel.',
+    stats: { hpBonusPct: 0 },
+    trigger: 'reviveOrMajorHeal',
+  },
   {
     id: 'lifting_belt',
     name: 'KDK Leder-Hebergürtel',
@@ -183,6 +238,17 @@ export const AUTO_CHESS_ITEMS: AutoChessItem[] = [
     stats: { lifestealPct: 25 },
     trigger: 'lifesteal',
   },
+  {
+    id: 'dextrose_shot',
+    name: 'Dextrose-Glykogen-Shot',
+    icon: 'pill',
+    rarity: 'rare',
+    cost: 5,
+    description: 'Notfall-Heilung: Fällt die HP unter 35%, heilt sich die Einheit um +50% Max-HP (1x pro Kampf).',
+    flavorText: 'Schnellste Kohlenhydrate für unmittelbare ATP-Wiederaufladung.',
+    stats: { hpBonusPct: 20, emergencyHealPct: 50 },
+    trigger: 'emergencyHeal',
+  },
 
   // ── EPIC / LEGENDARY ITEMS (8 Plates / 7% Drop) ─────────────────────
   {
@@ -229,23 +295,43 @@ export const AUTO_CHESS_ITEMS: AutoChessItem[] = [
     stats: { hpBonusPct: 20, maxDmgPerHitPct: 40 },
     trigger: 'oneHitProtection',
   },
+  {
+    id: 'golden_elixir',
+    name: 'Anaboles Erholungs-Elixier',
+    icon: 'flask',
+    rarity: 'epic',
+    cost: 8,
+    description: 'Todes-Trotz: Verhindert 1x K.O., stellt 35% HP wieder her & verleiht +30% ATK.',
+    flavorText: 'Das legendäre Geheimnis der Gold-Era-Athleten. Niemals aufgeben.',
+    stats: { hpBonusPct: 25, atkBonusPct: 15, reviveHpPct: 35 },
+    trigger: 'reviveOrMajorHeal',
+  },
 ];
 
 /**
  * Rolls loot drop for Mini-Boss victory
- * Common: 65%, Rare: 28%, Epic: 7% (slightly upgraded in round >= 4)
+ * 40% chance for a dedicated recovery/healing item, otherwise scaled rarity pool
  */
 export function rollMiniBossLoot(roundNumber: number = 1): AutoChessItem {
+  // 40% chance to guarantee a healing/recovery or revive item
+  const recoveryItemIds = ['revive_salts', 'trauma_ice_pack', 'electrolyte_drink', 'kinesio_tape', 'dextrose_shot', 'whey_shaker', 'golden_elixir', 'creatine'];
+  if (Math.random() < 0.40) {
+    const recoveryItems = AUTO_CHESS_ITEMS.filter(it => recoveryItemIds.includes(it.id));
+    if (recoveryItems.length > 0) {
+      return recoveryItems[Math.floor(Math.random() * recoveryItems.length)];
+    }
+  }
+
   const rand = Math.random() * 100;
   let rarity: ItemRarity = 'common';
 
   if (roundNumber >= 4) {
-    if (rand < 12) rarity = 'epic';
-    else if (rand < 45) rarity = 'rare';
+    if (rand < 15) rarity = 'epic';
+    else if (rand < 50) rarity = 'rare';
     else rarity = 'common';
   } else {
-    if (rand < 7) rarity = 'epic';
-    else if (rand < 35) rarity = 'rare';
+    if (rand < 10) rarity = 'epic';
+    else if (rand < 40) rarity = 'rare';
     else rarity = 'common';
   }
 
@@ -274,7 +360,7 @@ export function rollShopItem(): AutoChessItem | null {
 }
 
 /**
- * Mini-Boss Archetypes (Triggered at Wave 4)
+ * Mini-Boss Archetypes (Triggered every few waves)
  */
 export interface MiniBossDefinition {
   name: string;
@@ -291,7 +377,7 @@ export const MINI_BOSS_ARCHETYPES: MiniBossDefinition[] = [
   {
     name: 'Der Studio-Riese (Plate Warden)',
     avatar: 'shield-cross',
-    subtitle: 'Welle 4 • Zäher Koloss mit Kniebandagen-Dornen',
+    subtitle: 'Zäher Koloss mit Kniebandagen-Dornen',
     category: 'Legs',
     equipmentType: 'Kniebeugen-Käfig',
     itemId: 'knee_sleeves',
@@ -301,7 +387,7 @@ export const MINI_BOSS_ARCHETYPES: MiniBossDefinition[] = [
   {
     name: 'Der 1RM-Junkie (Adrenalin-Freak)',
     avatar: 'lightning-bolt',
-    subtitle: 'Welle 4 • Explosive Angriffskraft mit Riechsalz-Wut',
+    subtitle: 'Explosive Angriffskraft mit Riechsalz-Wut',
     category: 'Chest',
     equipmentType: 'Wettkampf-Bank',
     itemId: 'smelling_salts',
@@ -311,7 +397,7 @@ export const MINI_BOSS_ARCHETYPES: MiniBossDefinition[] = [
   {
     name: 'Das Massemonster (Oldschool Lifter)',
     avatar: 'skull',
-    subtitle: 'Welle 4 • Gepanzert mit KDK-Lederhebergürtel',
+    subtitle: 'Gepanzert mit KDK-Lederhebergürtel',
     category: 'Back',
     equipmentType: 'Kreuzhebe-Plattform',
     itemId: 'lifting_belt',
@@ -321,11 +407,31 @@ export const MINI_BOSS_ARCHETYPES: MiniBossDefinition[] = [
   {
     name: 'Das Calisthenics-Biest',
     avatar: 'arm-flex',
-    subtitle: 'Welle 4 • Akrobat mit hoher Crit-Chance & Wraps',
+    subtitle: 'Akrobat mit hoher Crit-Chance & Bandagen',
     category: 'Core',
     equipmentType: 'Klimmzug-Stange',
     itemId: 'wrist_wraps',
     bonusAtkMult: 1.25,
     bonusHpMult: 1.20,
+  },
+  {
+    name: 'Der Ausdauer-Koloss (WOD Champion)',
+    avatar: 'fire',
+    subtitle: 'Unermüdliche Erholung mit Elektrolyte-Drink',
+    category: 'Legs',
+    equipmentType: 'Kettlebell-Rack',
+    itemId: 'electrolyte_drink',
+    bonusAtkMult: 1.10,
+    bonusHpMult: 1.30,
+  },
+  {
+    name: 'Der Bankdrück-Gott (Heavy Bencher)',
+    avatar: 'dumbbell',
+    subtitle: 'Gefürchteter Drücker mit Dextrose-Shot',
+    category: 'Chest',
+    equipmentType: 'Power-Rack',
+    itemId: 'dextrose_shot',
+    bonusAtkMult: 1.30,
+    bonusHpMult: 1.25,
   },
 ];
